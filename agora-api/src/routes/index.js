@@ -11,6 +11,7 @@ const reportsRouter = require("./reports");
 const feesRouter = require("./fees");
 const eventsRouter = require("./events");
 const adminRouter = require("./admin");
+const observabilityRouter = require("./observability");
 
 const router = express.Router();
 
@@ -26,5 +27,6 @@ router.use(reportsRouter);
 router.use("/fees", feesRouter);
 router.use("/events", eventsRouter);
 router.use("/admin", adminRouter);
+router.use(observabilityRouter);
 
 module.exports = router;

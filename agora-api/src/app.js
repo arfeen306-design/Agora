@@ -4,6 +4,7 @@ const helmet = require("helmet");
 
 const requestId = require("./middleware/request-id");
 const auditTrail = require("./middleware/audit-trail");
+const requestObservability = require("./middleware/request-observability");
 const errorHandler = require("./middleware/error-handler");
 const apiRoutes = require("./routes");
 
@@ -14,6 +15,7 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use(requestId);
 app.use(auditTrail);
+app.use(requestObservability);
 
 app.use("/api/v1", apiRoutes);
 

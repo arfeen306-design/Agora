@@ -71,6 +71,21 @@
   - `.github/workflows/api-release.yml`
   - Runs tests, builds Docker image, pushes to GHCR on tag/manual trigger
 
+### Multi-Tenant Hardening + Observability (Step 21)
+- Tenant boundary enforcement:
+  - Added guard in `middleware/auth.js`
+  - Rejects cross-school hints in request payload/query/params/header (`TENANT_SCOPE_MISMATCH`)
+- Observability stack:
+  - `middleware/request-observability.js` (structured request logging + counters)
+  - `utils/observability.js` (in-memory metrics state)
+  - `middleware/error-handler.js` now emits structured error logs + error counters
+  - `routes/observability.js`:
+    - `GET /api/v1/internal/observability/metrics`
+    - `GET /api/v1/internal/observability/ready`
+- Route wiring:
+  - `routes/index.js` includes observability router
+- OpenAPI + tests updated for new internal endpoints and tenant guard behavior
+
 ## What Claude Code Has Built (DO NOT DUPLICATE)
 
 ### Web Dashboard (agora-web/)

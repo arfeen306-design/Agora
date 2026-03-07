@@ -1,9 +1,9 @@
 const express = require("express");
 const { z } = require("zod");
 
-const config = require("../config");
 const pool = require("../db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
+const { requireInternalApiKey } = require("../middleware/internal-key");
 const { getRealtimeHub } = require("../realtime/hub");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
@@ -64,14 +64,6 @@ function parseSchema(schema, input, message = "Invalid request input") {
 
 function hasRole(auth, role) {
   return Array.isArray(auth?.roles) && auth.roles.includes(role);
-}
-
-function requireInternalApiKey(req, _res, next) {
-  const incoming = req.header("X-Internal-Api-Key");
-  if (!incoming || incoming !== config.internalApiKey) {
-    return next(new AppError(401, "UNAUTHORIZED", "Invalid internal API key"));
-  }
-  return next();
 }
 
 async function userExistsInSchool({ schoolId, userId }) {

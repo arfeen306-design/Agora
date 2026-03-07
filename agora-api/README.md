@@ -29,9 +29,9 @@ API base:
 
 ## Next Implementation
 
-1. Multi-tenant hardening + observability
-2. Production security hardening (RLS + secrets)
-3. Infra automation (managed DB, secrets manager, monitoring)
+1. Production security hardening (RLS + secrets)
+2. Infra automation (managed DB, secrets manager, monitoring)
+3. SLO/alerting polish (error budget + worker alert thresholds)
 
 ## Step 5 Auth (Implemented)
 
@@ -417,3 +417,23 @@ Release pipeline:
   - run API tests
   - build Docker image
   - push image to GHCR (`ghcr.io/<owner>/agora-api`)
+
+## Step 21 Multi-Tenant Hardening + Observability (Implemented)
+
+Tenant hardening:
+
+- Auth middleware now enforces tenant boundary across request params/query/body/header (`school_id`, `schoolId`, `X-School-Id`)
+- Cross-school attempts return `403 TENANT_SCOPE_MISMATCH`
+
+Observability:
+
+- Structured request logs for every API request (JSON format)
+- Structured error logs from central error handler
+- In-memory request/error counters + recent request samples
+- New internal endpoints (require `X-Internal-Api-Key`):
+  - `GET /api/v1/internal/observability/metrics`
+  - `GET /api/v1/internal/observability/ready`
+
+Health update:
+
+- `/api/v1/health` now includes `uptime_seconds`

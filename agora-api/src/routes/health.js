@@ -18,6 +18,7 @@ router.get("/health", async (_req, res) => {
       service: "agora-api",
       status: "ok",
       db,
+      uptime_seconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     },
     meta: {

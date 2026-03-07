@@ -9,6 +9,7 @@ const pool = require("../../src/db");
 let server;
 let baseUrl;
 const deviceApiKey = process.env.ATTENDANCE_DEVICE_API_KEY || "dev-device-key";
+const internalApiKey = process.env.INTERNAL_API_KEY || "dev-internal-key";
 
 async function jsonRequest(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
@@ -258,4 +259,32 @@ test("push token register/list/delete works", async () => {
   assert.equal(remove.status, 200);
   assert.equal(remove.body?.success, true);
   assert.equal(remove.body?.data?.ok, true);
+});
+
+test("tenant boundary blocks cross-school hints", async () => {
+  const teacherToken = await login("teacher1@agora.com", "teach123");
+  const result = await jsonRequest(
+    "/api/v1/attendance?school_id=10000000-0000-0000-0000-000000000002",
+    {
+      headers: { Authorization: `Bearer ${teacherToken}` },
+    }
+  );
+
+  assert.equal(result.status, 403);
+  assert.equal(result.body?.success, false);
+  assert.equal(result.body?.error?.code, "TENANT_SCOPE_MISMATCH");
+});
+
+test("internal observability metrics requires internal key", async () => {
+  const denied = await jsonRequest("/api/v1/internal/observability/metrics");
+  assert.equal(denied.status, 401);
+
+  const allowed = await jsonRequest("/api/v1/internal/observability/metrics", {
+    headers: { "X-Internal-Api-Key": internalApiKey },
+  });
+
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.body?.success, true);
+  assert.equal(allowed.body?.data?.service, "agora-api");
+  assert.equal(typeof allowed.body?.data?.requests?.total, "number");
 });

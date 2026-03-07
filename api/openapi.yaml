@@ -1154,6 +1154,42 @@ paths:
         '403':
           $ref: '#/components/responses/ForbiddenError'
 
+  /internal/observability/metrics:
+    get:
+      tags: [Internal]
+      operationId: internalObservabilityMetrics
+      summary: Internal in-memory observability snapshot (requests/errors/process)
+      security:
+        - InternalApiKey: []
+      responses:
+        '200':
+          description: Observability metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilityMetricsResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /internal/observability/ready:
+    get:
+      tags: [Internal]
+      operationId: internalReadinessCheck
+      summary: Internal readiness probe (database connectivity)
+      security:
+        - InternalApiKey: []
+      responses:
+        '200':
+          description: Service ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalReadyResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+
   /internal/notifications/trigger:
     post:
       tags: [Internal]
@@ -1314,6 +1350,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     ForbiddenError:
       description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailableError:
+      description: Service unavailable
       content:
         application/json:
           schema:
@@ -2635,6 +2677,53 @@ components:
         payload:
           type: object
           additionalProperties: true
+
+    ObservabilityMetricsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            service:
+              type: string
+            started_at:
+              type: string
+              format: date-time
+            uptime_seconds:
+              type: integer
+            process:
+              type: object
+              additionalProperties: true
+            requests:
+              type: object
+              additionalProperties: true
+            errors:
+              type: object
+              additionalProperties: true
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    InternalReadyResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            service:
+              type: string
+            ready:
+              type: boolean
+            db:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+        meta:
+          $ref: '#/components/schemas/Meta'
 
 security:
   - BearerAuth: []
