@@ -59,6 +59,9 @@ For existing DBs (Step 19 push token migration):
 ```bash
 docker compose -f docker-compose.prod.yml exec -T postgres \
   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < /opt/agora/database/migrations/20260307_push_device_tokens.sql
+
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < /opt/agora/database/migrations/20260307_tenant_rls.sql
 ```
 
 ## 6) Health checks

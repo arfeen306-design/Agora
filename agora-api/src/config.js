@@ -7,9 +7,20 @@ function asBool(value, fallback = false) {
   return String(value).toLowerCase() === "true";
 }
 
+function asCsv(value) {
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 8080),
+  cors: {
+    allowedOrigins: asCsv(process.env.CORS_ALLOWED_ORIGINS),
+  },
   db: {
     host: process.env.DB_HOST || "127.0.0.1",
     port: Number(process.env.DB_PORT || 5432),
@@ -25,6 +36,14 @@ const config = {
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "30d",
   },
   internalApiKey: process.env.INTERNAL_API_KEY || "dev-internal-key",
+  rateLimit: {
+    authLoginWindowMs: Number(process.env.RATE_LIMIT_AUTH_LOGIN_WINDOW_MS || 60000),
+    authLoginMax: Number(process.env.RATE_LIMIT_AUTH_LOGIN_MAX || 20),
+    deviceIngestWindowMs: Number(process.env.RATE_LIMIT_DEVICE_INGEST_WINDOW_MS || 60000),
+    deviceIngestMax: Number(process.env.RATE_LIMIT_DEVICE_INGEST_MAX || 120),
+    internalWindowMs: Number(process.env.RATE_LIMIT_INTERNAL_WINDOW_MS || 60000),
+    internalMax: Number(process.env.RATE_LIMIT_INTERNAL_MAX || 180),
+  },
   attendanceDevice: {
     apiKey: process.env.ATTENDANCE_DEVICE_API_KEY || "dev-device-key",
     lateAfterLocalTime: process.env.ATTENDANCE_DEVICE_LATE_AFTER_LOCAL_TIME || "08:05:00",

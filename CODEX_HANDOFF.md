@@ -86,6 +86,21 @@
   - `routes/index.js` includes observability router
 - OpenAPI + tests updated for new internal endpoints and tenant guard behavior
 
+### Production Security Hardening (Step 22)
+- API security:
+  - Strict production CORS allowlist (`CORS_ALLOWED_ORIGINS`)
+  - `x-powered-by` disabled
+  - Rate limiting middleware for:
+    - `POST /auth/login`
+    - `POST /attendance/device-ingest`
+    - `/internal/*` endpoints
+- Request context + DB session hardening:
+  - Added `AsyncLocalStorage` request context (`utils/request-context.js`)
+  - DB layer now sets `app.current_school_id` per request session (`src/db.js`)
+- RLS migration:
+  - `database/migrations/20260307_tenant_rls.sql`
+  - Adds tenant policy helper function and enables RLS policies on school-scoped tables
+
 ## What Claude Code Has Built (DO NOT DUPLICATE)
 
 ### Web Dashboard (agora-web/)

@@ -44,6 +44,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitedError'
 
   /auth/refresh:
     post:
@@ -182,6 +184,8 @@ paths:
           $ref: '#/components/responses/NotFoundError'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitedError'
 
   /attendance/{attendanceId}:
     patch:
@@ -1170,6 +1174,8 @@ paths:
                 $ref: '#/components/schemas/ObservabilityMetricsResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitedError'
 
   /internal/observability/ready:
     get:
@@ -1189,6 +1195,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '503':
           $ref: '#/components/responses/ServiceUnavailableError'
+        '429':
+          $ref: '#/components/responses/RateLimitedError'
 
   /internal/notifications/trigger:
     post:
@@ -1356,6 +1364,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     ServiceUnavailableError:
       description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimitedError:
+      description: Rate limit exceeded
       content:
         application/json:
           schema:

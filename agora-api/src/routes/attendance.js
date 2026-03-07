@@ -5,6 +5,7 @@ const { z } = require("zod");
 const config = require("../config");
 const pool = require("../db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
+const { createRateLimiter } = require("../middleware/rate-limit");
 const { getRealtimeHub } = require("../realtime/hub");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
@@ -12,6 +13,14 @@ const { fireAndForgetAuditLog } = require("../utils/audit-log");
 const { success } = require("../utils/http");
 
 const router = express.Router();
+
+const deviceIngestRateLimiter = createRateLimiter({
+  name: "device_ingest",
+  windowMs: config.rateLimit.deviceIngestWindowMs,
+  max: config.rateLimit.deviceIngestMax,
+  keyFn: (req) =>
+    `${req.ip || "unknown"}:${String(req.header("X-Device-Api-Key") || "no-key").slice(0, 24)}`,
+});
 
 const attendanceStatusSchema = z.enum(["present", "absent", "late", "leave"]);
 
@@ -631,6 +640,7 @@ router.post(
 
 router.post(
   "/device-ingest",
+  deviceIngestRateLimiter,
   requireDeviceApiKey,
   asyncHandler(async (req, res) => {
     const body = parseSchema(deviceIngestSchema, req.body, "Invalid attendance device ingest payload");

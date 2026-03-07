@@ -29,9 +29,9 @@ API base:
 
 ## Next Implementation
 
-1. Production security hardening (RLS + secrets)
-2. Infra automation (managed DB, secrets manager, monitoring)
-3. SLO/alerting polish (error budget + worker alert thresholds)
+1. Infra automation (managed DB, secrets manager, monitoring)
+2. SLO/alerting polish (error budget + worker alert thresholds)
+3. Backup/restore drills + disaster recovery runbooks
 
 ## Step 5 Auth (Implemented)
 
@@ -437,3 +437,30 @@ Observability:
 Health update:
 
 - `/api/v1/health` now includes `uptime_seconds`
+
+## Step 22 Production Security Hardening (Implemented)
+
+API hardening:
+
+- Strict CORS allowlist support through `CORS_ALLOWED_ORIGINS` (enforced in production)
+- `x-powered-by` disabled
+- In-memory rate limits added for:
+  - `POST /api/v1/auth/login`
+  - `POST /api/v1/attendance/device-ingest`
+  - `/api/v1/internal/*` endpoints
+
+Tenant context hardening:
+
+- Request async context added (`AsyncLocalStorage`) and database layer now sets `app.current_school_id` per request automatically
+- This makes tenant checks available at DB session level for RLS policies
+
+Database hardening:
+
+- Added migration: `/Users/admin/Desktop/Agora/database/migrations/20260307_tenant_rls.sql`
+- Migration enables RLS + tenant policy on school-scoped tables using `app.current_school_id`
+
+Apply on existing DB:
+
+```bash
+psql -h 127.0.0.1 -U agora_user -d agora -f /Users/admin/Desktop/Agora/database/migrations/20260307_tenant_rls.sql
+```

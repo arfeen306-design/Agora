@@ -4,8 +4,10 @@ const bcrypt = require("bcryptjs");
 const express = require("express");
 const { z } = require("zod");
 
+const config = require("../config");
 const pool = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const { createRateLimiter } = require("../middleware/rate-limit");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
 const { sha256 } = require("../utils/crypto");
@@ -18,6 +20,13 @@ const {
 } = require("../utils/jwt");
 
 const router = express.Router();
+
+const loginRateLimiter = createRateLimiter({
+  name: "auth_login",
+  windowMs: config.rateLimit.authLoginWindowMs,
+  max: config.rateLimit.authLoginMax,
+  keyFn: (req) => `${req.ip || "unknown"}:${String(req.body?.email || "").toLowerCase()}`,
+});
 
 const loginSchema = z.object({
   school_code: z.string().trim().min(1),
@@ -163,6 +172,7 @@ async function createSessionAndTokens(client, user, roles) {
 
 router.post(
   "/login",
+  loginRateLimiter,
   asyncHandler(async (req, res) => {
     const input = parseBody(loginSchema, req.body);
     const user = await getUserByLogin(input.school_code, input.email);
