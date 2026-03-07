@@ -92,6 +92,43 @@ async function request<T = unknown>(
   return body as ApiResponse<T>;
 }
 
+async function requestBlob(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    ...((options.headers as Record<string, string>) || {}),
+  };
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      clearTokens();
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
+    }
+    throw new ApiError(
+      res.status,
+      body.error?.code || "UNKNOWN",
+      body.error?.message || "Request failed",
+      body.error?.details
+    );
+  }
+
+  return res.blob();
+}
+
 // ─── Auth ───
 export async function login(schoolCode: string, email: string, password: string) {
   const res = await request<{
@@ -295,6 +332,81 @@ export async function createEvent(data: {
   target_classroom_id?: string;
 }) {
   return request("/events", { method: "POST", body: JSON.stringify(data) });
+}
+
+// ─── Reports ───
+export async function getAttendanceSummary(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request(`/reports/attendance/summary?${query}`);
+}
+
+export async function getHomeworkSummary(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request(`/reports/homework/summary?${query}`);
+}
+
+export async function getMarksSummary(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request(`/reports/marks/summary?${query}`);
+}
+
+export async function getFeesSummary(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request(`/reports/fees/summary?${query}`);
+}
+
+type ReportKind = "attendance" | "homework" | "marks" | "fees";
+type ExportFormat = "csv" | "pdf";
+
+export async function exportReport(
+  report: ReportKind,
+  format: ExportFormat,
+  params: Record<string, string> = {}
+) {
+  const query = new URLSearchParams({
+    ...params,
+    format,
+  }).toString();
+  return requestBlob(`/reports/${report}/export?${query}`);
+}
+
+// ─── Admin Audit ───
+export async function getAuditLogs(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request(`/admin/audit-logs?${query}`);
+}
+
+export async function exportAuditLogs(format: ExportFormat, params: Record<string, string> = {}) {
+  const query = new URLSearchParams({
+    ...params,
+    format,
+  }).toString();
+  return requestBlob(`/admin/audit-logs/export?${query}`);
+}
+
+// ─── Internal Observability ───
+function internalHeaders(internalApiKey: string) {
+  return {
+    "X-Internal-Api-Key": internalApiKey,
+  };
+}
+
+export async function getObservabilityMetrics(internalApiKey: string) {
+  return request("/internal/observability/metrics", {
+    headers: internalHeaders(internalApiKey),
+  });
+}
+
+export async function getObservabilityReady(internalApiKey: string) {
+  return request("/internal/observability/ready", {
+    headers: internalHeaders(internalApiKey),
+  });
+}
+
+export async function getObservabilitySlo(internalApiKey: string) {
+  return request("/internal/observability/slo", {
+    headers: internalHeaders(internalApiKey),
+  });
 }
 
 export { ApiError, clearTokens, getToken };

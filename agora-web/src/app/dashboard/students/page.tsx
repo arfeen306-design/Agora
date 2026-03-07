@@ -15,7 +15,7 @@ export default function StudentsPage() {
   const { isAdmin } = useAuth();
   const [studentId, setStudentId] = useState("");
   const [attendanceRecords, setAttendanceRecords] = useState<StudentView[]>([]);
-  const [marksSummary, setMarksSummary] = useState<unknown>(null);
+  const [marksSummary, setMarksSummary] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<"attendance" | "marks">("attendance");
 
@@ -29,7 +29,7 @@ export default function StudentsPage() {
         setMarksSummary(null);
       } else {
         const res = await getStudentMarksSummary(studentId);
-        setMarksSummary(res.data);
+        setMarksSummary((res.data || null) as Record<string, unknown> | null);
         setAttendanceRecords([]);
       }
     } catch {
