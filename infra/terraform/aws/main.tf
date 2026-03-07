@@ -74,12 +74,12 @@ resource "aws_db_instance" "postgres" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
-  multi_az                      = var.db_multi_az
-  deletion_protection           = true
-  skip_final_snapshot           = true
-  auto_minor_version_upgrade    = true
-  performance_insights_enabled  = true
-  publicly_accessible           = false
+  multi_az                            = var.db_multi_az
+  deletion_protection                 = true
+  skip_final_snapshot                 = true
+  auto_minor_version_upgrade          = true
+  performance_insights_enabled        = true
+  publicly_accessible                 = false
   iam_database_authentication_enabled = true
 }
 

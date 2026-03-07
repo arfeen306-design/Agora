@@ -36,3 +36,4 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+infra/terraform/aws/.terraform/
