@@ -1,0 +1,39 @@
+{
+  "name": "agora-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agora backend API (Node.js + Express + PostgreSQL)",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "check": "node -e \"require('./src/app'); console.log('syntax_ok')\"",
+    "test": "node --test",
+    "test:api": "node --test test/api/**/*.test.js",
+    "worker:notifications": "node src/workers/notification-worker.js",
+    "worker:notifications:once": "NOTIFICATION_WORKER_RUN_ONCE=true node src/workers/notification-worker.js",
+    "worker:reminders": "node src/workers/reminder-worker.js",
+    "worker:reminders:once": "REMINDER_WORKER_RUN_ONCE=true node src/workers/reminder-worker.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1004.0",
+    "@aws-sdk/s3-request-presigner": "^3.1004.0",
+    "@google-cloud/storage": "^7.19.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pdfkit": "^0.17.2",
+    "pg": "^8.12.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

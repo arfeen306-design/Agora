@@ -1,0 +1,2640 @@
+openapi: 3.0.3
+info:
+  title: Agora API
+  version: 1.0.0
+  description: |
+    Agora School Management Platform API.
+    Base contract aligned with Step 3 (auth, attendance, homework, marks, messaging, notifications).
+servers:
+  - url: /api/v1
+    description: Relative base URL
+tags:
+  - name: Auth
+  - name: Attendance
+  - name: Homework
+  - name: Marks
+  - name: Messaging
+  - name: Notifications
+  - name: Files
+  - name: Reports
+  - name: Admin
+  - name: Internal
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Login and issue access/refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Refresh access token using refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke refresh token session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessBooleanResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Current authenticated user profile
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /attendance:
+    get:
+      tags: [Attendance]
+      operationId: listAttendance
+      summary: List attendance records
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AttendanceStatus'
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Attendance list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /attendance/bulk:
+    post:
+      tags: [Attendance]
+      operationId: bulkUpsertAttendance
+      summary: Create/update attendance entries for a class and date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceBulkRequest'
+      responses:
+        '200':
+          description: Bulk attendance processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceBulkResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /attendance/device-ingest:
+    post:
+      tags: [Attendance]
+      operationId: ingestAttendanceFromDevice
+      summary: Ingest attendance check-in from RFID/QR/face device
+      security:
+        - DeviceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceDeviceIngestRequest'
+      responses:
+        '200':
+          description: Device attendance ingested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceDeviceIngestResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /attendance/{attendanceId}:
+    patch:
+      tags: [Attendance]
+      operationId: updateAttendance
+      summary: Update one attendance record
+      parameters:
+        - $ref: '#/components/parameters/attendanceIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceUpdateRequest'
+      responses:
+        '200':
+          description: Attendance record updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceRecordResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /homework:
+    get:
+      tags: [Homework]
+      operationId: listHomework
+      summary: List homework
+      parameters:
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/subjectIdQuery'
+        - name: due_from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: due_to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: published
+          in: query
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Homework list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Homework]
+      operationId: createHomework
+      summary: Create homework
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeworkCreateRequest'
+      responses:
+        '201':
+          description: Homework created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /homework/{homeworkId}:
+    patch:
+      tags: [Homework]
+      operationId: updateHomework
+      summary: Update homework
+      parameters:
+        - $ref: '#/components/parameters/homeworkIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeworkUpdateRequest'
+      responses:
+        '200':
+          description: Homework updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Homework]
+      operationId: deleteHomework
+      summary: Delete homework (soft delete recommended)
+      parameters:
+        - $ref: '#/components/parameters/homeworkIdPath'
+      responses:
+        '200':
+          description: Homework deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessBooleanResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /homework/{homeworkId}/submissions:
+    get:
+      tags: [Homework]
+      operationId: listHomeworkSubmissions
+      summary: List submissions for one homework
+      parameters:
+        - $ref: '#/components/parameters/homeworkIdPath'
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Submission list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkSubmissionListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [Homework]
+      operationId: createHomeworkSubmission
+      summary: Create submission
+      parameters:
+        - $ref: '#/components/parameters/homeworkIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeworkSubmissionCreateRequest'
+      responses:
+        '201':
+          description: Submission created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkSubmissionResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /homework/submissions/{submissionId}:
+    patch:
+      tags: [Homework]
+      operationId: updateHomeworkSubmission
+      summary: Update submission status/score/feedback
+      parameters:
+        - $ref: '#/components/parameters/submissionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HomeworkSubmissionUpdateRequest'
+      responses:
+        '200':
+          description: Submission updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkSubmissionResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /assessments:
+    get:
+      tags: [Marks]
+      operationId: listAssessments
+      summary: List assessments
+      parameters:
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/subjectIdQuery'
+        - name: assessment_type
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Assessment list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssessmentListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Marks]
+      operationId: createAssessment
+      summary: Create assessment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssessmentCreateRequest'
+      responses:
+        '201':
+          description: Assessment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssessmentResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /assessments/{assessmentId}:
+    patch:
+      tags: [Marks]
+      operationId: updateAssessment
+      summary: Update assessment
+      parameters:
+        - $ref: '#/components/parameters/assessmentIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssessmentUpdateRequest'
+      responses:
+        '200':
+          description: Assessment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssessmentResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /assessments/{assessmentId}/scores/bulk:
+    post:
+      tags: [Marks]
+      operationId: bulkUpsertScores
+      summary: Bulk create/update assessment scores
+      parameters:
+        - $ref: '#/components/parameters/assessmentIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkScoreRequest'
+      responses:
+        '200':
+          description: Scores processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoreResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /students/{studentId}/marks/summary:
+    get:
+      tags: [Marks]
+      operationId: getStudentMarksSummary
+      summary: Get student marks analytics summary
+      parameters:
+        - $ref: '#/components/parameters/studentIdPath'
+      responses:
+        '200':
+          description: Marks summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarksSummaryResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /conversations:
+    get:
+      tags: [Messaging]
+      operationId: listConversations
+      summary: List user conversations
+      parameters:
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Conversation list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Messaging]
+      operationId: createConversation
+      summary: Create conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationCreateRequest'
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /conversations/{conversationId}/messages:
+    get:
+      tags: [Messaging]
+      operationId: listConversationMessages
+      summary: List messages in a conversation
+      parameters:
+        - $ref: '#/components/parameters/conversationIdPath'
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+      responses:
+        '200':
+          description: Message list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      tags: [Messaging]
+      operationId: createMessage
+      summary: Send message to conversation
+      parameters:
+        - $ref: '#/components/parameters/conversationIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageCreateRequest'
+      responses:
+        '201':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /conversations/{conversationId}/read:
+    post:
+      tags: [Messaging]
+      operationId: markConversationRead
+      summary: Mark conversation as read for current user
+      parameters:
+        - $ref: '#/components/parameters/conversationIdPath'
+      responses:
+        '200':
+          description: Read state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessBooleanResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: List notifications for current user
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/NotificationStatus'
+        - name: channel
+          in: query
+          schema:
+            $ref: '#/components/schemas/NotificationChannel'
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Notification list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /notifications/{notificationId}/read:
+    patch:
+      tags: [Notifications]
+      operationId: markNotificationRead
+      summary: Mark one notification as read
+      parameters:
+        - $ref: '#/components/parameters/notificationIdPath'
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /notifications/test:
+    post:
+      tags: [Notifications]
+      operationId: sendTestNotification
+      summary: Send test notification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestNotificationRequest'
+      responses:
+        '200':
+          description: Notification queued/sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /notifications/push-tokens:
+    get:
+      tags: [Notifications]
+      operationId: listPushTokens
+      summary: List push device tokens for current user
+      responses:
+        '200':
+          description: Push tokens list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushTokenListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Notifications]
+      operationId: upsertPushToken
+      summary: Register or refresh push device token for current user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenUpsertRequest'
+      responses:
+        '200':
+          description: Push token upserted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushTokenResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /notifications/push-tokens/{tokenId}:
+    delete:
+      tags: [Notifications]
+      operationId: deletePushToken
+      summary: Revoke one push token for current user
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Push token revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessBooleanResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /files/upload-url:
+    post:
+      tags: [Files]
+      operationId: createSignedUploadUrl
+      summary: Generate signed upload URL (and download URL for same object)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileUploadUrlRequest'
+      responses:
+        '200':
+          description: Signed upload URL generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadUrlResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /files/download-url:
+    post:
+      tags: [Files]
+      operationId: createSignedDownloadUrl
+      summary: Generate signed download URL for existing object key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileDownloadUrlRequest'
+      responses:
+        '200':
+          description: Signed download URL generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileDownloadUrlResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /files/local/upload/{token}:
+    put:
+      tags: [Files]
+      operationId: localSignedUpload
+      summary: Upload binary payload using local signed token (development)
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Local upload complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileLocalUploadResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /files/local/download/{token}:
+    get:
+      tags: [Files]
+      operationId: localSignedDownload
+      summary: Download binary payload using local signed token (development)
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /reports/attendance/summary:
+    get:
+      tags: [Reports]
+      operationId: getAttendanceReportSummary
+      summary: Attendance report summary
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+      responses:
+        '200':
+          description: Attendance summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceReportSummaryResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /reports/homework/summary:
+    get:
+      tags: [Reports]
+      operationId: getHomeworkReportSummary
+      summary: Homework report summary
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/subjectIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+      responses:
+        '200':
+          description: Homework summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeworkReportSummaryResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /reports/marks/summary:
+    get:
+      tags: [Reports]
+      operationId: getMarksReportSummary
+      summary: Marks report summary
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/subjectIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - name: assessment_type
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Marks summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarksReportSummaryResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /reports/fees/summary:
+    get:
+      tags: [Reports]
+      operationId: getFeesReportSummary
+      summary: Fees report summary
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, issued, partial, paid, overdue, cancelled]
+      responses:
+        '200':
+          description: Fees summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeesReportSummaryResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /reports/attendance/export:
+    get:
+      tags: [Reports]
+      operationId: exportAttendanceReport
+      summary: Export attendance report as CSV or PDF
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - $ref: '#/components/parameters/reportFormatQuery'
+        - $ref: '#/components/parameters/reportMaxRowsQuery'
+      responses:
+        '200':
+          description: Report file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /reports/homework/export:
+    get:
+      tags: [Reports]
+      operationId: exportHomeworkReport
+      summary: Export homework report as CSV or PDF
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/subjectIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - $ref: '#/components/parameters/reportFormatQuery'
+        - $ref: '#/components/parameters/reportMaxRowsQuery'
+      responses:
+        '200':
+          description: Report file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /reports/marks/export:
+    get:
+      tags: [Reports]
+      operationId: exportMarksReport
+      summary: Export marks report as CSV or PDF
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/classroomIdQuery'
+        - $ref: '#/components/parameters/subjectIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - name: assessment_type
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/reportFormatQuery'
+        - $ref: '#/components/parameters/reportMaxRowsQuery'
+      responses:
+        '200':
+          description: Report file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /reports/fees/export:
+    get:
+      tags: [Reports]
+      operationId: exportFeesReport
+      summary: Export fees report as CSV or PDF
+      parameters:
+        - $ref: '#/components/parameters/studentIdQuery'
+        - $ref: '#/components/parameters/dateFromQuery'
+        - $ref: '#/components/parameters/dateToQuery'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, issued, partial, paid, overdue, cancelled]
+        - $ref: '#/components/parameters/reportFormatQuery'
+        - $ref: '#/components/parameters/reportMaxRowsQuery'
+      responses:
+        '200':
+          description: Report file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /admin/audit-logs:
+    get:
+      tags: [Admin]
+      operationId: listAuditLogs
+      summary: List audit log entries (school admin only)
+      parameters:
+        - name: actor_user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: entity_name
+          in: query
+          schema:
+            type: string
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/pageQuery'
+        - $ref: '#/components/parameters/pageSizeQuery'
+      responses:
+        '200':
+          description: Audit log list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/audit-logs/export:
+    get:
+      tags: [Admin]
+      operationId: exportAuditLogs
+      summary: Export audit logs as CSV or PDF (school admin only)
+      parameters:
+        - name: actor_user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: entity_name
+          in: query
+          schema:
+            type: string
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/reportFormatQuery'
+        - $ref: '#/components/parameters/reportMaxRowsQuery'
+      responses:
+        '200':
+          description: Audit export file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /internal/notifications/trigger:
+    post:
+      tags: [Internal]
+      operationId: internalTriggerNotification
+      summary: Internal event trigger for notifications
+      security:
+        - InternalApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalNotificationTriggerRequest'
+      responses:
+        '200':
+          description: Internal trigger accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessBooleanResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    DeviceApiKey:
+      type: apiKey
+      in: header
+      name: X-Device-Api-Key
+    InternalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Api-Key
+
+  parameters:
+    pageQuery:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSizeQuery:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    reportFormatQuery:
+      name: format
+      in: query
+      schema:
+        type: string
+        enum: [csv, pdf]
+        default: csv
+    reportMaxRowsQuery:
+      name: max_rows
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 1000
+    studentIdQuery:
+      name: student_id
+      in: query
+      schema:
+        type: string
+        format: uuid
+    classroomIdQuery:
+      name: classroom_id
+      in: query
+      schema:
+        type: string
+        format: uuid
+    subjectIdQuery:
+      name: subject_id
+      in: query
+      schema:
+        type: string
+        format: uuid
+    dateFromQuery:
+      name: date_from
+      in: query
+      schema:
+        type: string
+        format: date
+    dateToQuery:
+      name: date_to
+      in: query
+      schema:
+        type: string
+        format: date
+    attendanceIdPath:
+      name: attendanceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    homeworkIdPath:
+      name: homeworkId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    submissionIdPath:
+      name: submissionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    assessmentIdPath:
+      name: assessmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    studentIdPath:
+      name: studentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    conversationIdPath:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    notificationIdPath:
+      name: notificationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ForbiddenError:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Meta:
+      type: object
+      properties:
+        request_id:
+          type: string
+          format: uuid
+
+    PagingMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total_items:
+          type: integer
+        total_pages:
+          type: integer
+
+    ErrorItem:
+      type: object
+      properties:
+        field:
+          type: string
+        issue:
+          type: string
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorItem'
+
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RoleCode:
+      type: string
+      enum: [school_admin, teacher, parent, student]
+
+    AttendanceStatus:
+      type: string
+      enum: [present, absent, late, leave]
+
+    AttendanceDeviceSource:
+      type: string
+      enum: [rfid, qr, face]
+
+    HomeworkSubmissionStatus:
+      type: string
+      enum: [assigned, submitted, reviewed, missing]
+
+    MessageKind:
+      type: string
+      enum: [text, file, system]
+
+    NotificationChannel:
+      type: string
+      enum: [in_app, push, email, sms]
+
+    NotificationStatus:
+      type: string
+      enum: [queued, sent, failed, read]
+
+    PushProvider:
+      type: string
+      enum: [fcm]
+
+    PushPlatform:
+      type: string
+      enum: [android, ios, web]
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        school_id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+        last_name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleCode'
+
+    SuccessBooleanResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            ok:
+              type: boolean
+              example: true
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    LoginRequest:
+      type: object
+      required: [school_code, email, password]
+      properties:
+        school_code:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    LogoutRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    LoginData:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+        token_type:
+          type: string
+          example: Bearer
+        user:
+          $ref: '#/components/schemas/User'
+
+    LoginResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/LoginData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    MeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/User'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AttendanceEntry:
+      type: object
+      required: [student_id, status]
+      properties:
+        student_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        check_in_at:
+          type: string
+          format: date-time
+          nullable: true
+        source:
+          type: string
+          example: manual
+        note:
+          type: string
+          nullable: true
+
+    AttendanceRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        student_id:
+          type: string
+          format: uuid
+        classroom_id:
+          type: string
+          format: uuid
+        attendance_date:
+          type: string
+          format: date
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        check_in_at:
+          type: string
+          format: date-time
+          nullable: true
+        source:
+          type: string
+        note:
+          type: string
+          nullable: true
+
+    AttendanceBulkRequest:
+      type: object
+      required: [classroom_id, attendance_date, entries]
+      properties:
+        classroom_id:
+          type: string
+          format: uuid
+        attendance_date:
+          type: string
+          format: date
+        entries:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AttendanceEntry'
+
+    AttendanceBulkResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            created_count:
+              type: integer
+            updated_count:
+              type: integer
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AttendanceDeviceIngestRequest:
+      type: object
+      required: [school_code, source]
+      properties:
+        school_code:
+          type: string
+          example: agora_demo
+        student_id:
+          type: string
+          format: uuid
+        student_code:
+          type: string
+          example: STD-001
+        classroom_id:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/AttendanceDeviceSource'
+        scanner_id:
+          type: string
+          example: gate-a
+        scanned_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+      oneOf:
+        - required: [student_id]
+        - required: [student_code]
+
+    AttendanceDeviceIngestData:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [created, updated]
+        attendance:
+          $ref: '#/components/schemas/AttendanceRecord'
+        derived:
+          type: object
+          properties:
+            school_timezone:
+              type: string
+            late_after_local_time:
+              type: string
+            is_late:
+              type: boolean
+        notifications_queued:
+          type: integer
+        student:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            student_code:
+              type: string
+            first_name:
+              type: string
+            last_name:
+              type: string
+              nullable: true
+
+    AttendanceDeviceIngestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/AttendanceDeviceIngestData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AttendanceUpdateRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/AttendanceStatus'
+        check_in_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+        note:
+          type: string
+
+    AttendanceRecordResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/AttendanceRecord'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AttendanceListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendanceRecord'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    Homework:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        classroom_id:
+          type: string
+          format: uuid
+        subject_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+        is_published:
+          type: boolean
+
+    HomeworkCreateRequest:
+      type: object
+      required: [classroom_id, title]
+      properties:
+        classroom_id:
+          type: string
+          format: uuid
+        subject_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        due_at:
+          type: string
+          format: date-time
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+        is_published:
+          type: boolean
+          default: true
+
+    HomeworkUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        due_at:
+          type: string
+          format: date-time
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+        is_published:
+          type: boolean
+
+    HomeworkResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Homework'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    HomeworkListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Homework'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    HomeworkSubmission:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        homework_id:
+          type: string
+          format: uuid
+        student_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/HomeworkSubmissionStatus'
+        submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        graded_at:
+          type: string
+          format: date-time
+          nullable: true
+        score:
+          type: number
+          nullable: true
+        feedback:
+          type: string
+          nullable: true
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+
+    HomeworkSubmissionCreateRequest:
+      type: object
+      required: [student_id, status]
+      properties:
+        student_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/HomeworkSubmissionStatus'
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+
+    HomeworkSubmissionUpdateRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/HomeworkSubmissionStatus'
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+        feedback:
+          type: string
+        graded_at:
+          type: string
+          format: date-time
+
+    HomeworkSubmissionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/HomeworkSubmission'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    HomeworkSubmissionListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/HomeworkSubmission'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    Assessment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        classroom_id:
+          type: string
+          format: uuid
+        subject_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        assessment_type:
+          type: string
+        max_marks:
+          type: number
+        assessment_date:
+          type: string
+          format: date
+          nullable: true
+
+    AssessmentCreateRequest:
+      type: object
+      required: [classroom_id, title, assessment_type, max_marks]
+      properties:
+        classroom_id:
+          type: string
+          format: uuid
+        subject_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        assessment_type:
+          type: string
+        max_marks:
+          type: number
+          minimum: 0.01
+        assessment_date:
+          type: string
+          format: date
+
+    AssessmentUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        assessment_type:
+          type: string
+        max_marks:
+          type: number
+          minimum: 0.01
+        assessment_date:
+          type: string
+          format: date
+
+    AssessmentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Assessment'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AssessmentListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Assessment'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    ScoreItem:
+      type: object
+      required: [student_id, marks_obtained]
+      properties:
+        student_id:
+          type: string
+          format: uuid
+        marks_obtained:
+          type: number
+          minimum: 0
+        remarks:
+          type: string
+          nullable: true
+
+    BulkScoreRequest:
+      type: object
+      required: [scores]
+      properties:
+        scores:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ScoreItem'
+
+    BulkScoreResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            created_count:
+              type: integer
+            updated_count:
+              type: integer
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    SubjectAverage:
+      type: object
+      properties:
+        subject_id:
+          type: string
+          format: uuid
+        subject_name:
+          type: string
+        average:
+          type: number
+
+    TrendPoint:
+      type: object
+      properties:
+        label:
+          type: string
+        average:
+          type: number
+
+    MarksSummary:
+      type: object
+      properties:
+        student_id:
+          type: string
+          format: uuid
+        overall_average:
+          type: number
+        subject_averages:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubjectAverage'
+        trend:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendPoint'
+
+    MarksSummaryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/MarksSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [direct, group, broadcast]
+        title:
+          type: string
+          nullable: true
+        unread_count:
+          type: integer
+        last_message_preview:
+          type: string
+          nullable: true
+
+    ConversationCreateRequest:
+      type: object
+      required: [kind, participant_user_ids]
+      properties:
+        kind:
+          type: string
+          enum: [direct, group, broadcast]
+        title:
+          type: string
+          nullable: true
+        participant_user_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+
+    ConversationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Conversation'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ConversationListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        sender_user_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/MessageKind'
+        body:
+          type: string
+          nullable: true
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+        sent_at:
+          type: string
+          format: date-time
+        edited_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    MessageCreateRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          $ref: '#/components/schemas/MessageKind'
+        body:
+          type: string
+        attachment_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+
+    MessageResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Message'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    MessageListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                next_cursor:
+                  type: string
+                  nullable: true
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        body:
+          type: string
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+        status:
+          $ref: '#/components/schemas/NotificationStatus'
+        payload:
+          type: object
+          additionalProperties: true
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Notification'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    NotificationListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    TestNotificationRequest:
+      type: object
+      required: [user_id, title, body, channel]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        body:
+          type: string
+        channel:
+          $ref: '#/components/schemas/NotificationChannel'
+
+    PushToken:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          $ref: '#/components/schemas/PushProvider'
+        platform:
+          $ref: '#/components/schemas/PushPlatform'
+        device_id:
+          type: string
+          nullable: true
+        app_version:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        last_seen_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PushTokenUpsertRequest:
+      type: object
+      required: [provider, platform, device_token]
+      properties:
+        provider:
+          $ref: '#/components/schemas/PushProvider'
+        platform:
+          $ref: '#/components/schemas/PushPlatform'
+        device_token:
+          type: string
+        device_id:
+          type: string
+        app_version:
+          type: string
+
+    PushTokenResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/PushToken'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    PushTokenListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PushToken'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    FileProvider:
+      type: string
+      enum: [local, s3, gcs]
+
+    SignedFileTransport:
+      type: object
+      properties:
+        provider:
+          $ref: '#/components/schemas/FileProvider'
+        method:
+          type: string
+          example: PUT
+        url:
+          type: string
+          format: uri
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expires_in:
+          type: integer
+          example: 900
+
+    FileUploadUrlRequest:
+      type: object
+      required: [file_name, content_type]
+      properties:
+        scope:
+          type: string
+          enum: [homework, submission, message, profile, general]
+        file_name:
+          type: string
+        content_type:
+          type: string
+          example: application/pdf
+        size_bytes:
+          type: integer
+          minimum: 1
+
+    FileDownloadUrlRequest:
+      type: object
+      required: [object_key]
+      properties:
+        object_key:
+          type: string
+
+    FileUploadUrlData:
+      type: object
+      properties:
+        provider:
+          $ref: '#/components/schemas/FileProvider'
+        bucket:
+          type: string
+        object_key:
+          type: string
+        upload:
+          $ref: '#/components/schemas/SignedFileTransport'
+        download:
+          $ref: '#/components/schemas/SignedFileTransport'
+
+    FileDownloadUrlData:
+      type: object
+      properties:
+        provider:
+          $ref: '#/components/schemas/FileProvider'
+        bucket:
+          type: string
+        object_key:
+          type: string
+        download:
+          $ref: '#/components/schemas/SignedFileTransport'
+
+    FileUploadUrlResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/FileUploadUrlData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    FileDownloadUrlResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/FileDownloadUrlData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    FileLocalUploadResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            uploaded:
+              type: boolean
+            object_key:
+              type: string
+            size_bytes:
+              type: integer
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AttendanceReportSummary:
+      type: object
+      properties:
+        total_records:
+          type: integer
+        present_count:
+          type: integer
+        absent_count:
+          type: integer
+        late_count:
+          type: integer
+        leave_count:
+          type: integer
+        present_rate:
+          type: number
+        absent_rate:
+          type: number
+
+    HomeworkReportSummary:
+      type: object
+      properties:
+        distinct_homework_count:
+          type: integer
+        total_assigned:
+          type: integer
+        submitted_count:
+          type: integer
+        reviewed_count:
+          type: integer
+        missing_count:
+          type: integer
+        pending_count:
+          type: integer
+        completion_rate:
+          type: number
+
+    MarksReportSummary:
+      type: object
+      properties:
+        score_count:
+          type: integer
+        assessment_count:
+          type: integer
+        avg_marks_obtained:
+          type: number
+        max_marks_obtained:
+          type: number
+        min_marks_obtained:
+          type: number
+        avg_percentage:
+          type: number
+
+    FeesReportSummary:
+      type: object
+      properties:
+        total_invoices:
+          type: integer
+        paid_count:
+          type: integer
+        overdue_count:
+          type: integer
+        amount_due_total:
+          type: number
+        amount_paid_total:
+          type: number
+        outstanding_total:
+          type: number
+        overdue_total:
+          type: number
+
+    AttendanceReportSummaryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/AttendanceReportSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    HomeworkReportSummaryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/HomeworkReportSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    MarksReportSummaryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/MarksReportSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    FeesReportSummaryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/FeesReportSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    AuditLogRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        school_id:
+          type: string
+          format: uuid
+        actor_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        actor_name:
+          type: string
+          nullable: true
+        actor_email:
+          type: string
+          format: email
+          nullable: true
+        action:
+          type: string
+        entity_name:
+          type: string
+        entity_id:
+          type: string
+          format: uuid
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    AuditLogListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogRecord'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                pagination:
+                  $ref: '#/components/schemas/PagingMeta'
+
+    InternalNotificationTriggerRequest:
+      type: object
+      required: [event_type, school_id, actor_user_id, payload]
+      properties:
+        event_type:
+          type: string
+          example: attendance.marked
+        school_id:
+          type: string
+          format: uuid
+        actor_user_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          additionalProperties: true
+
+security:
+  - BearerAuth: []

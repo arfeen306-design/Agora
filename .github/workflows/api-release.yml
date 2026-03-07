@@ -1,0 +1,149 @@
+name: Agora API Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "agora-api-v*"
+      - "v*"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: agora-api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: agora-api/package-lock.json
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agora_user') THEN
+              CREATE ROLE agora_user WITH LOGIN PASSWORD 'change_me' SUPERUSER;
+            ELSE
+              ALTER ROLE agora_user WITH LOGIN PASSWORD 'change_me' SUPERUSER;
+            END IF;
+          END $$;
+
+          SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+          WHERE datname = 'agora'
+            AND pid <> pg_backend_pid();
+
+          DROP DATABASE IF EXISTS agora;
+          CREATE DATABASE agora OWNER agora_user;
+          SQL
+
+      - name: Apply schema and seed
+        env:
+          PGPASSWORD: change_me
+        run: |
+          psql -h 127.0.0.1 -U agora_user -d agora -v ON_ERROR_STOP=1 -f ../database/agora_schema.sql
+          psql -h 127.0.0.1 -U agora_user -d agora -v ON_ERROR_STOP=1 -f ../database/dev_seed.sql
+
+      - name: Run API tests
+        env:
+          NODE_ENV: test
+          PORT: 0
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_NAME: agora
+          DB_USER: agora_user
+          DB_PASSWORD: change_me
+          DB_SSL: "false"
+          JWT_ACCESS_SECRET: ci-access-secret
+          JWT_REFRESH_SECRET: ci-refresh-secret
+          INTERNAL_API_KEY: ci-internal-key
+          ATTENDANCE_DEVICE_API_KEY: ci-device-key
+          ATTENDANCE_DEVICE_LATE_AFTER_LOCAL_TIME: "08:05:00"
+          ATTENDANCE_DEVICE_NOTIFICATION_CHANNEL: push
+        run: npm test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_ref: ${{ steps.export.outputs.image_ref }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agora-api
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./agora-api
+          file: ./agora-api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Export image reference
+        id: export
+        run: |
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
+          echo "image_ref=${FIRST_TAG}" >> "$GITHUB_OUTPUT"

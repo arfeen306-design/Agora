@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agora}
+      POSTGRES_USER: ${POSTGRES_USER:-agora_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_strong}
+    volumes:
+      - agora_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agora_user} -d ${POSTGRES_DB:-agora}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ${AGORA_API_IMAGE:-agora-api:latest}
+    build:
+      context: ./agora-api
+      dockerfile: Dockerfile
+    env_file:
+      - ./agora-api/.env.production
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/v1/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
+  worker-notifications:
+    image: ${AGORA_API_IMAGE:-agora-api:latest}
+    build:
+      context: ./agora-api
+      dockerfile: Dockerfile
+    env_file:
+      - ./agora-api/.env.production
+    command: ["node", "src/workers/notification-worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  worker-reminders:
+    image: ${AGORA_API_IMAGE:-agora-api:latest}
+    build:
+      context: ./agora-api
+      dockerfile: Dockerfile
+    env_file:
+      - ./agora-api/.env.production
+    command: ["node", "src/workers/reminder-worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  agora_postgres_data:

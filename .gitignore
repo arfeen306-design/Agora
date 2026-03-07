@@ -1,0 +1,38 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Node
+**/node_modules/
+**/.next/
+**/dist/
+**/build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+**/__pycache__/
+**/*.pyc
+venv/
+.venv/
+
+# Secrets / env
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Flutter / mobile generated
+**/.dart_tool/
+**/.packages
+**/build/
+**/ios/Pods/
+
+# Logs
+*.log
+
+# Local DB / temp
+*.db
+*.sqlite
+*.sqlite3

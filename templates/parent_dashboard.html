@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ data.name }}'s School Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-1: #eef7ff;
+            --bg-2: #fff5e8;
+            --card: #ffffff;
+            --text-main: #1a2540;
+            --text-soft: #5b657e;
+            --blue: #2563eb;
+            --teal: #0891b2;
+            --amber: #d97706;
+            --violet: #7c3aed;
+            --green: #15803d;
+            --red: #b91c1c;
+            --border: #d9e5f9;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+            color: var(--text-main);
+            background:
+                radial-gradient(circle at 10% 10%, #dff4ff 0%, transparent 36%),
+                radial-gradient(circle at 90% 20%, #ffe9ca 0%, transparent 36%),
+                linear-gradient(140deg, var(--bg-1), var(--bg-2));
+            min-height: 100vh;
+            padding: 16px;
+        }
+
+        .container {
+            max-width: 1120px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 18px;
+            box-shadow: 0 10px 22px rgba(37, 99, 235, 0.08);
+        }
+
+        .hero {
+            background: linear-gradient(135deg, #1d4ed8, #0f766e);
+            color: #fff;
+            border: 0;
+            margin-bottom: 14px;
+        }
+
+        .hero-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .school-logo {
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 18px;
+            letter-spacing: 1px;
+        }
+
+        .eyebrow {
+            margin: 0;
+            font-size: 12px;
+            opacity: 0.88;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        h1 {
+            margin: 4px 0 0;
+            font-size: 28px;
+            line-height: 1.15;
+        }
+
+        .hero-sub {
+            margin: 14px 0 0;
+            opacity: 0.95;
+            font-size: 15px;
+        }
+
+        .action-wrap {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .picker-form {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.16);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 12px;
+            padding: 8px 10px;
+        }
+
+        .picker-form label {
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        .picker-form select {
+            border: 0;
+            border-radius: 8px;
+            padding: 8px;
+            min-width: 140px;
+        }
+
+        .logout-btn {
+            text-decoration: none;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 12px;
+            padding: 10px 14px;
+            font-weight: 700;
+        }
+
+        .section-title {
+            margin: 0 0 10px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-icon {
+            width: 20px;
+            height: 20px;
+            color: var(--blue);
+        }
+
+        .notification-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .note {
+            border-radius: 14px;
+            padding: 12px;
+            border: 1px solid;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+
+        .note-icon {
+            width: 28px;
+            height: 28px;
+            flex: 0 0 auto;
+        }
+
+        .note h4 {
+            margin: 0 0 4px;
+            font-size: 14px;
+        }
+
+        .note p {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .note-success {
+            background: #ecfdf3;
+            border-color: #86efac;
+            color: #14532d;
+        }
+
+        .note-info {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1e3a8a;
+        }
+
+        .note-alert {
+            background: #fff7ed;
+            border-color: #fdba74;
+            color: #9a3412;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .metric-card h3 {
+            margin: 0 0 10px;
+            font-size: 15px;
+            color: var(--text-soft);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .metric-icon {
+            width: 16px;
+            height: 16px;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .homework-list,
+        .events-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .homework-list li,
+        .events-list li {
+            border-radius: 12px;
+            margin-bottom: 8px;
+            padding: 12px;
+        }
+
+        .homework-list li {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .status-pill {
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .hw-done {
+            background: #e8fce9;
+        }
+
+        .hw-done .status-pill {
+            background: #dcfce7;
+            color: var(--green);
+        }
+
+        .hw-pending {
+            background: #fff1f2;
+        }
+
+        .hw-pending .status-pill {
+            background: #fee2e2;
+            color: var(--red);
+        }
+
+        .events-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: linear-gradient(140deg, var(--amber), #f59e0b);
+            flex: 0 0 auto;
+        }
+
+        @media (max-width: 980px) {
+            .notification-grid {
+                grid-template-columns: 1fr;
+            }
+            .metrics-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 10px;
+            }
+            h1 {
+                font-size: 24px;
+            }
+            .hero {
+                padding: 14px;
+            }
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+            .homework-list li {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .picker-form {
+                width: 100%;
+            }
+            .picker-form select {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="card hero">
+            <div class="hero-top">
+                <div class="brand">
+                    <div class="school-logo">MS</div>
+                    <div>
+                        <p class="eyebrow">Magic School Parent Portal</p>
+                        <h1>{{ data.name }} Dashboard</h1>
+                    </div>
+                </div>
+                <div class="action-wrap">
+                    {% if children|length > 1 %}
+                    <form method="GET" class="picker-form">
+                        <label for="child">Child</label>
+                        <select name="child" id="child" onchange="this.form.submit()">
+                            {% for child in children %}
+                                <option value="{{ child.id }}" {% if child.id == selected_id %}selected{% endif %}>{{ child.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                    {% endif %}
+                    <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+                </div>
+            </div>
+            <p class="hero-sub"><strong>Today:</strong> {{ data.attendance_today }}</p>
+        </header>
+
+        <section class="card">
+            <h2 class="section-title">
+                <svg class="section-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 22a2.5 2.5 0 0 0 2.4-2h-4.8A2.5 2.5 0 0 0 12 22Z" fill="currentColor"/>
+                    <path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                </svg>
+                Notifications
+            </h2>
+            {% set note_list = data.notifications if data.notifications else [] %}
+            <div class="notification-grid">
+                {% for note in note_list %}
+                    <div class="note note-{{ note.type }}">
+                        <svg class="note-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            {% if note.type == 'success' %}
+                            <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z" stroke="currentColor" stroke-width="1.8"/>
+                            <path d="m8 12.5 2.5 2.5L16 9.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            {% elif note.type == 'alert' %}
+                            <path d="M12 3 2 20h20L12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                            <path d="M12 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                            <circle cx="12" cy="17" r="1" fill="currentColor"/>
+                            {% else %}
+                            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z" stroke="currentColor" stroke-width="1.8"/>
+                            <path d="M12 11V7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                            <circle cx="12" cy="15.5" r="1" fill="currentColor"/>
+                            {% endif %}
+                        </svg>
+                        <div>
+                            <h4>{{ note.title }}</h4>
+                            <p>{{ note.message }}</p>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="metrics-grid">
+            <div class="card metric-card">
+                <h3>
+                    <svg class="metric-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Zm0 2.3 6.6 3.7L12 11.7 5.4 8 12 4.3Z"/></svg>
+                    Attendance
+                </h3>
+                <canvas id="attChart" height="150"></canvas>
+            </div>
+            <div class="card metric-card">
+                <h3>
+                    <svg class="metric-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2Zm1 5h8v2h-8V7Zm0 4h6v2h-6v-2Z"/></svg>
+                    Punctuality
+                </h3>
+                <canvas id="puncChart" height="150"></canvas>
+            </div>
+            <div class="card metric-card">
+                <h3>
+                    <svg class="metric-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 3 7v6c0 5 3.8 8.9 9 9 5.2-.1 9-4 9-9V7l-9-5Zm0 2.2L18.8 8 12 11.8 5.2 8 12 4.2Z"/></svg>
+                    Behavior
+                </h3>
+                <canvas id="discChart" height="150"></canvas>
+            </div>
+            <div class="card metric-card">
+                <h3>
+                    <svg class="metric-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2V5a2 2 0 0 1 2-2Z"/></svg>
+                    Homework
+                </h3>
+                <canvas id="hwChart" height="150"></canvas>
+            </div>
+        </section>
+
+        <section class="content-grid">
+            <div class="card">
+                <h2 class="section-title">
+                    <svg class="section-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M4 5a2 2 0 0 1 2-2h12v18l-5-2-5 2V5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                    </svg>
+                    Homework List
+                </h2>
+                {% if data.homework and data.homework|length > 0 %}
+                <ul class="homework-list">
+                    {% for hw in data.homework %}
+                    <li class="{% if hw.done %}hw-done{% else %}hw-pending{% endif %}">
+                        <div><strong>{{ hw.subject }}:</strong> {{ hw.task }}</div>
+                        <span class="status-pill">{% if hw.done %}Done{% else %}Pending{% endif %}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p>No homework assigned yet.</p>
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <h2 class="section-title">
+                    <svg class="section-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M8 3v4M16 3v4M3 10h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                    Upcoming Events
+                </h2>
+                <ul class="events-list">
+                    {% for event in data.upcoming_events %}
+                    <li><span class="dot"></span>{{ event }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        function drawDonut(id, value, color) {
+            const element = document.getElementById(id);
+            if (!element) return;
+            const ctx = element.getContext("2d");
+            const safeValue = Math.max(0, Math.min(100, Number(value || 0)));
+            new Chart(ctx, {
+                type: "doughnut",
+                data: {
+                    datasets: [{
+                        data: [safeValue, 100 - safeValue],
+                        backgroundColor: [color, color + "2b"],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    cutout: "68%",
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false },
+                        title: {
+                            display: true,
+                            text: Math.round(safeValue) + "%",
+                            font: { size: 26, weight: "700" },
+                            color: "#1f2b46"
+                        }
+                    }
+                }
+            });
+        }
+
+        drawDonut("attChart", {{ data.attendance_this_month }}, "#2563eb");
+        drawDonut("puncChart", {{ data.punctuality }}, "#d97706");
+        drawDonut("discChart", {{ data.discipline }}, "#7c3aed");
+        drawDonut("hwChart", {{ data.hw_percent }}, "#15803d");
+    </script>
+</body>
+</html>
