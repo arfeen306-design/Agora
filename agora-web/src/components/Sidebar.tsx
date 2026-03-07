@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 
@@ -154,7 +153,7 @@ export default function Sidebar() {
         {visibleItems.map((item) => {
           const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
           return (
-            <Link
+            <a
               key={item.href}
               href={item.href}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -165,7 +164,7 @@ export default function Sidebar() {
             >
               <span className={isActive ? "text-primary-600" : "text-gray-400"}>{item.icon}</span>
               {item.label}
-            </Link>
+            </a>
           );
         })}
       </nav>

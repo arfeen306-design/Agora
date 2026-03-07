@@ -166,6 +166,22 @@
   - `infra/terraform/aws/README.md`
   - env examples and README status updated
 
+### CloudWatch Worker Metrics Publishing (Step 28)
+- Added CloudWatch metrics publisher integration:
+  - `src/services/cloudwatch-worker-metrics.js`
+  - `src/services/worker-queue-metrics.js`
+  - `src/workers/worker-metrics-publisher.js`
+- Metrics published:
+  - `NotificationQueueDepth`
+  - `NotificationOldestQueuedMinutes`
+  - `NotificationFailedPending`
+- Namespace + dimensions configurable via env (defaults to `Agora/Workers`, `Service=agora-api`)
+- Added worker scripts:
+  - `npm run worker:metrics`
+  - `npm run worker:metrics:once`
+- Added `worker-metrics` service to `docker-compose.prod.yml`
+- Updated docs/env examples and added tests for metric mapping
+
 ## What Claude Code Has Built (DO NOT DUPLICATE)
 
 ### Web Dashboard (agora-web/)
@@ -195,7 +211,6 @@
 - Keep backend stable and avoid overlap with Claude frontend work
 - Production rollout tasks:
   - Wire runtime to Secrets Manager output from Terraform
-  - Publish SLO worker queue metrics to CloudWatch namespace `Agora/Workers`
   - Tune SLO/worker thresholds after one week of real traffic
 
 ### Architecture Decisions Made

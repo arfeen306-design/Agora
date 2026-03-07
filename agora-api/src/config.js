@@ -217,6 +217,18 @@ const config = {
     workerFailedPendingWarning: Number(process.env.ALERT_WORKER_FAILED_PENDING_WARNING || 25),
     workerFailedPendingCritical: Number(process.env.ALERT_WORKER_FAILED_PENDING_CRITICAL || 100),
   },
+  workerMetrics: {
+    publishEnabled: asBool(process.env.WORKER_METRICS_PUBLISH_ENABLED, false),
+    publishIntervalMs: Number(process.env.WORKER_METRICS_PUBLISH_INTERVAL_MS || 60000),
+    publishRunOnce: asBool(process.env.WORKER_METRICS_PUBLISH_RUN_ONCE, false),
+    namespace: process.env.WORKER_METRICS_NAMESPACE || "Agora/Workers",
+    serviceDimension: process.env.WORKER_METRICS_SERVICE_DIMENSION || "agora-api",
+    awsRegion:
+      process.env.WORKER_METRICS_AWS_REGION ||
+      process.env.AWS_REGION ||
+      process.env.STORAGE_REGION ||
+      "us-east-1",
+  },
   storage: {
     provider: process.env.STORAGE_PROVIDER || "local", // local | s3 | gcs
     bucket: process.env.STORAGE_BUCKET || "agora-dev",

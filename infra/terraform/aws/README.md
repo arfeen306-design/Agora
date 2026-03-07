@@ -47,4 +47,4 @@ Optional fallback:
 ## Notes
 
 - Worker alarms (`NotificationQueueDepth`, `NotificationOldestQueuedMinutes`, `NotificationFailedPending`) expect metrics under namespace `Agora/Workers`.
-- Step 25 internal SLO endpoint provides these values; publish them to CloudWatch via your runtime collector/sidecar.
+- Step 28 adds `worker-metrics` publisher (`npm run worker:metrics`) that sends these values directly to CloudWatch.

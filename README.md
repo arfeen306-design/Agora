@@ -12,7 +12,7 @@ This folder is now the single source of truth for the Agora project.
 
 ## Current Phase
 
-- Backend milestones through Step 27 completed (auth, modules, workers, tests, CI/CD, infra automation, SLO alerting, secrets-runtime wiring)
+- Backend milestones through Step 28 completed (auth, modules, workers, tests, CI/CD, infra automation, SLO alerting, secrets-runtime wiring, CloudWatch worker metrics)
 - Web + mobile clients are active in parallel (`agora-web`, `agora-mobile`)
 - Current focus: production rollout and frontend integration
 

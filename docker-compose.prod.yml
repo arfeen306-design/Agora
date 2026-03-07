@@ -65,5 +65,20 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  worker-metrics:
+    image: ${AGORA_API_IMAGE:-agora-api:latest}
+    build:
+      context: ./agora-api
+      dockerfile: Dockerfile
+    env_file:
+      - ./agora-api/.env.production
+    command: ["node", "src/workers/worker-metrics-publisher.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   agora_postgres_data:

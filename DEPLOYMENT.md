@@ -1,4 +1,4 @@
-# Agora Deployment (Step 20-27)
+# Agora Deployment (Step 20-28)
 
 This runbook deploys the backend stack (API + workers + PostgreSQL) using Docker Compose.
 
@@ -143,7 +143,28 @@ Example secret payload (matches Terraform output):
 }
 ```
 
-## 11) SLO + Alerting Endpoint (Step 25)
+## 11) CloudWatch Worker Metrics Publisher (Step 28)
+
+Worker service is now included in `docker-compose.prod.yml` as:
+
+- `worker-metrics`
+
+It publishes these metrics into CloudWatch namespace `Agora/Workers`:
+
+- `NotificationQueueDepth`
+- `NotificationOldestQueuedMinutes`
+- `NotificationFailedPending`
+
+Required runtime env in `agora-api/.env.production`:
+
+- `WORKER_METRICS_PUBLISH_ENABLED=true`
+- `WORKER_METRICS_NAMESPACE=Agora/Workers`
+- `WORKER_METRICS_SERVICE_DIMENSION=agora-api`
+- `WORKER_METRICS_AWS_REGION=<your-region>`
+
+For AWS auth, use IAM role on compute (recommended) or standard AWS env credentials.
+
+## 12) SLO + Alerting Endpoint (Step 25)
 
 Internal monitoring endpoint:
 

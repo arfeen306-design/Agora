@@ -29,7 +29,7 @@ API base:
 
 ## Backend Status
 
-Core backend roadmap through Step 27 is now implemented in this repo.
+Core backend roadmap through Step 28 is now implemented in this repo.
 
 ## Step 5 Auth (Implemented)
 
@@ -560,3 +560,29 @@ Accepted secret keys:
 - `username` or `user`
 - `password`
 - optional: `ssl`, `sslmode`, `url`
+
+## Step 28 CloudWatch Worker Metrics Publishing (Implemented)
+
+New worker scripts:
+
+- `npm run worker:metrics`
+- `npm run worker:metrics:once`
+
+What it publishes to CloudWatch namespace `Agora/Workers`:
+
+- `NotificationQueueDepth`
+- `NotificationOldestQueuedMinutes`
+- `NotificationFailedPending`
+
+Default metric dimension:
+
+- `Service=agora-api`
+
+New env keys:
+
+- `WORKER_METRICS_PUBLISH_ENABLED`
+- `WORKER_METRICS_PUBLISH_INTERVAL_MS`
+- `WORKER_METRICS_PUBLISH_RUN_ONCE`
+- `WORKER_METRICS_NAMESPACE`
+- `WORKER_METRICS_SERVICE_DIMENSION`
+- `WORKER_METRICS_AWS_REGION`

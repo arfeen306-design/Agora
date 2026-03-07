@@ -13,9 +13,12 @@
     "worker:notifications": "node src/workers/notification-worker.js",
     "worker:notifications:once": "NOTIFICATION_WORKER_RUN_ONCE=true node src/workers/notification-worker.js",
     "worker:reminders": "node src/workers/reminder-worker.js",
-    "worker:reminders:once": "REMINDER_WORKER_RUN_ONCE=true node src/workers/reminder-worker.js"
+    "worker:reminders:once": "REMINDER_WORKER_RUN_ONCE=true node src/workers/reminder-worker.js",
+    "worker:metrics": "node src/workers/worker-metrics-publisher.js",
+    "worker:metrics:once": "WORKER_METRICS_PUBLISH_RUN_ONCE=true node src/workers/worker-metrics-publisher.js"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1004.0",
     "@aws-sdk/client-s3": "^3.1004.0",
     "@aws-sdk/s3-request-presigner": "^3.1004.0",
     "@google-cloud/storage": "^7.19.0",

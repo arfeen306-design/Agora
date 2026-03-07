@@ -6,6 +6,7 @@ const { requireInternalApiKey } = require("../middleware/internal-key");
 const asyncHandler = require("../utils/async-handler");
 const { success } = require("../utils/http");
 const { getObservabilitySnapshot, getSloSnapshot } = require("../utils/observability");
+const { fetchNotificationWorkerSnapshot } = require("../services/worker-queue-metrics");
 
 const router = express.Router();
 
@@ -72,41 +73,6 @@ function evaluateWorkerAlerts(workerSnapshot) {
   return alerts;
 }
 
-async function fetchWorkerQueueSnapshot() {
-  const maxRetries = Math.max(1, Number(config.notifications.worker.maxRetries || 3));
-  const result = await pool.query(
-    `
-      SELECT
-        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued_count,
-        COUNT(*) FILTER (
-          WHERE
-            status = 'failed'
-            AND (
-              CASE
-                WHEN COALESCE(payload->>'retry_count', '') ~ '^[0-9]+$'
-                  THEN (payload->>'retry_count')::int
-                ELSE 0
-              END
-            ) < $1
-        )::int AS failed_with_retry_remaining,
-        COALESCE(
-          EXTRACT(EPOCH FROM (NOW() - MIN(created_at) FILTER (WHERE status = 'queued'))) / 60.0,
-          0
-        ) AS oldest_queued_minutes,
-        MAX(sent_at) FILTER (WHERE status = 'sent') AS last_sent_at
-      FROM notifications
-    `,
-    [maxRetries]
-  );
-
-  return result.rows[0] || {
-    queued_count: 0,
-    failed_with_retry_remaining: 0,
-    oldest_queued_minutes: 0,
-    last_sent_at: null,
-  };
-}
-
 router.get(
   "/internal/observability/metrics",
   requireInternalApiKey,
@@ -160,11 +126,11 @@ router.get(
       burnRateCritical: config.slo.burnRateCritical,
     });
 
-    const workerSnapshot = await fetchWorkerQueueSnapshot();
+    const workerSnapshot = await fetchNotificationWorkerSnapshot();
     const worker = {
-      queued_count: Number(workerSnapshot.queued_count || 0),
-      failed_with_retry_remaining: Number(workerSnapshot.failed_with_retry_remaining || 0),
-      oldest_queued_minutes: Math.round(Number(workerSnapshot.oldest_queued_minutes || 0) * 100) / 100,
+      queued_count: workerSnapshot.queued_count,
+      failed_with_retry_remaining: workerSnapshot.failed_with_retry_remaining,
+      oldest_queued_minutes: workerSnapshot.oldest_queued_minutes,
       last_sent_at: workerSnapshot.last_sent_at || null,
       thresholds: {
         queue_warning: config.alerts.workerQueueDepthWarning,
