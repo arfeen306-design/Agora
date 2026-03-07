@@ -1,0 +1,39 @@
+name: Agora Web CI
+
+on:
+  push:
+    paths:
+      - "agora-web/**"
+      - ".github/workflows/web-ci.yml"
+  pull_request:
+    paths:
+      - "agora-web/**"
+      - ".github/workflows/web-ci.yml"
+
+jobs:
+  web-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: agora-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: agora-web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
