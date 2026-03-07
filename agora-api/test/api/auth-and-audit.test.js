@@ -300,6 +300,8 @@ test("internal observability slo endpoint returns alert payload shape", async ()
   assert.equal(allowed.status, 200);
   assert.equal(allowed.body?.success, true);
   assert.equal(allowed.body?.data?.service, "agora-api");
+  assert.equal(typeof allowed.body?.data?.runtime?.db_credentials_source, "string");
+  assert.equal(typeof allowed.body?.data?.runtime?.worker_metrics_publish_enabled, "boolean");
   assert.equal(typeof allowed.body?.data?.slo?.target_availability_percent, "number");
   assert.equal(typeof allowed.body?.data?.workers?.notifications?.queued_count, "number");
   assert.ok(Array.isArray(allowed.body?.data?.alerts));

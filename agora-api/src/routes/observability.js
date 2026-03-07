@@ -149,6 +149,11 @@ router.get(
       {
         service: "agora-api",
         generated_at: new Date().toISOString(),
+        runtime: {
+          node_env: config.nodeEnv,
+          db_credentials_source: config.db.secretSource || "env",
+          worker_metrics_publish_enabled: config.workerMetrics.publishEnabled,
+        },
         slo,
         workers: {
           notifications: worker,

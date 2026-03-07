@@ -7,7 +7,13 @@ import {
   getAttendanceSummary,
   getFeesSummary,
   getHomeworkSummary,
+  getLookupClassrooms,
+  getLookupStudents,
+  getLookupSubjects,
   getMarksSummary,
+  type LookupClassroom,
+  type LookupStudent,
+  type LookupSubject,
 } from "@/lib/api";
 
 interface AttendanceSummary {
@@ -59,24 +65,34 @@ const reportKinds: Array<{ key: ReportKind; label: string }> = [
   { key: "fees", label: "Fees" },
 ];
 
+const REPORT_FILTERS_KEY = "agora_web_reports_filters_v1";
+
+const defaultFilters = {
+  date_from: "",
+  date_to: "",
+  classroom_id: "",
+  student_id: "",
+  subject_id: "",
+  status: "",
+  assessment_type: "",
+};
+
 export default function ReportsPage() {
   const [attendance, setAttendance] = useState<AttendanceSummary | null>(null);
   const [homework, setHomework] = useState<HomeworkSummary | null>(null);
   const [marks, setMarks] = useState<MarksSummary | null>(null);
   const [fees, setFees] = useState<FeesSummary | null>(null);
+
+  const [classrooms, setClassrooms] = useState<LookupClassroom[]>([]);
+  const [students, setStudents] = useState<LookupStudent[]>([]);
+  const [subjects, setSubjects] = useState<LookupSubject[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [downloadState, setDownloadState] = useState<Record<string, boolean>>({});
+  const [hydrated, setHydrated] = useState(false);
 
-  const [filters, setFilters] = useState({
-    date_from: "",
-    date_to: "",
-    classroom_id: "",
-    student_id: "",
-    subject_id: "",
-    status: "",
-    assessment_type: "",
-  });
+  const [filters, setFilters] = useState(defaultFilters);
 
   const buildCommonFilters = useCallback(() => {
     const params: Record<string, string> = {};
@@ -86,7 +102,30 @@ export default function ReportsPage() {
     if (filters.student_id) params.student_id = filters.student_id;
     if (filters.subject_id) params.subject_id = filters.subject_id;
     return params;
-  }, [filters]);
+  }, [filters.date_from, filters.date_to, filters.classroom_id, filters.student_id, filters.subject_id]);
+
+  const loadLookups = useCallback(async () => {
+    try {
+      const [classroomList, studentList, subjectList] = await Promise.all([
+        getLookupClassrooms({ page_size: 200 }),
+        getLookupStudents({
+          page_size: 200,
+          ...(filters.classroom_id ? { classroom_id: filters.classroom_id } : {}),
+        }),
+        getLookupSubjects({
+          page_size: 200,
+          ...(filters.classroom_id ? { classroom_id: filters.classroom_id } : {}),
+        }),
+      ]);
+      setClassrooms(classroomList);
+      setStudents(studentList);
+      setSubjects(subjectList);
+    } catch {
+      setClassrooms([]);
+      setStudents([]);
+      setSubjects([]);
+    }
+  }, [filters.classroom_id]);
 
   const loadSummaries = useCallback(async () => {
     setLoading(true);
@@ -123,8 +162,33 @@ export default function ReportsPage() {
   }, [buildCommonFilters, filters.assessment_type, filters.status]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(REPORT_FILTERS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as typeof defaultFilters;
+        setFilters((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch {
+      // ignore bad localStorage payload
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(REPORT_FILTERS_KEY, JSON.stringify(filters));
+  }, [hydrated, filters]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    loadLookups();
+  }, [hydrated, loadLookups]);
+
+  useEffect(() => {
+    if (!hydrated) return;
     loadSummaries();
-  }, [loadSummaries]);
+  }, [hydrated, loadSummaries]);
 
   async function download(kind: ReportKind, format: ExportFormat) {
     const actionKey = `${kind}_${format}`;
@@ -190,41 +254,64 @@ export default function ReportsPage() {
               />
             </div>
             <div>
-              <label className="label-text">Classroom ID</label>
-              <input
-                type="text"
+              <label className="label-text">Classroom</label>
+              <select
                 className="input-field"
-                placeholder="Optional UUID"
                 value={filters.classroom_id}
-                onChange={(e) => setFilters((prev) => ({ ...prev, classroom_id: e.target.value }))}
-              />
+                onChange={(e) => {
+                  const classroomId = e.target.value;
+                  setFilters((prev) => ({
+                    ...prev,
+                    classroom_id: classroomId,
+                    student_id: "",
+                    subject_id: "",
+                  }));
+                }}
+              >
+                <option value="">All classrooms</option>
+                {classrooms.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="label-text">Student ID</label>
-              <input
-                type="text"
+              <label className="label-text">Student</label>
+              <select
                 className="input-field"
-                placeholder="Optional UUID"
                 value={filters.student_id}
                 onChange={(e) => setFilters((prev) => ({ ...prev, student_id: e.target.value }))}
-              />
+              >
+                <option value="">All students</option>
+                {students.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="label-text">Subject ID</label>
-              <input
-                type="text"
+              <label className="label-text">Subject</label>
+              <select
                 className="input-field"
-                placeholder="Optional UUID"
                 value={filters.subject_id}
                 onChange={(e) => setFilters((prev) => ({ ...prev, subject_id: e.target.value }))}
-              />
+              >
+                <option value="">All subjects</option>
+                {subjects.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="label-text">Assessment Type</label>
               <input
                 type="text"
                 className="input-field"
-                placeholder="quiz/monthly..."
+                placeholder="quiz/monthly"
                 value={filters.assessment_type}
                 onChange={(e) => setFilters((prev) => ({ ...prev, assessment_type: e.target.value }))}
               />
@@ -245,9 +332,18 @@ export default function ReportsPage() {
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <button className="btn-primary w-full" onClick={loadSummaries} disabled={loading}>
                 {loading ? "Loading..." : "Refresh Summaries"}
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setFilters(defaultFilters);
+                  setMessage("");
+                }}
+              >
+                Reset
               </button>
             </div>
           </div>
@@ -260,11 +356,21 @@ export default function ReportsPage() {
               <p className="text-gray-400">Loading...</p>
             ) : (
               <div className="space-y-2 text-sm">
-                <p>Total records: <strong>{attendance.total_records}</strong></p>
-                <p>Present: <strong>{attendance.present_count}</strong> ({attendance.present_rate}%)</p>
-                <p>Absent: <strong>{attendance.absent_count}</strong> ({attendance.absent_rate}%)</p>
-                <p>Late: <strong>{attendance.late_count}</strong></p>
-                <p>Leave: <strong>{attendance.leave_count}</strong></p>
+                <p>
+                  Total records: <strong>{attendance.total_records}</strong>
+                </p>
+                <p>
+                  Present: <strong>{attendance.present_count}</strong> ({attendance.present_rate}%)
+                </p>
+                <p>
+                  Absent: <strong>{attendance.absent_count}</strong> ({attendance.absent_rate}%)
+                </p>
+                <p>
+                  Late: <strong>{attendance.late_count}</strong>
+                </p>
+                <p>
+                  Leave: <strong>{attendance.leave_count}</strong>
+                </p>
               </div>
             )}
           </div>
@@ -275,12 +381,24 @@ export default function ReportsPage() {
               <p className="text-gray-400">Loading...</p>
             ) : (
               <div className="space-y-2 text-sm">
-                <p>Total assigned: <strong>{homework.total_assigned}</strong></p>
-                <p>Distinct homework: <strong>{homework.distinct_homework_count}</strong></p>
-                <p>Submitted: <strong>{homework.submitted_count}</strong></p>
-                <p>Reviewed: <strong>{homework.reviewed_count}</strong></p>
-                <p>Missing: <strong>{homework.missing_count}</strong></p>
-                <p>Completion rate: <strong>{homework.completion_rate}%</strong></p>
+                <p>
+                  Total assigned: <strong>{homework.total_assigned}</strong>
+                </p>
+                <p>
+                  Distinct homework: <strong>{homework.distinct_homework_count}</strong>
+                </p>
+                <p>
+                  Submitted: <strong>{homework.submitted_count}</strong>
+                </p>
+                <p>
+                  Reviewed: <strong>{homework.reviewed_count}</strong>
+                </p>
+                <p>
+                  Missing: <strong>{homework.missing_count}</strong>
+                </p>
+                <p>
+                  Completion rate: <strong>{homework.completion_rate}%</strong>
+                </p>
               </div>
             )}
           </div>
@@ -291,12 +409,24 @@ export default function ReportsPage() {
               <p className="text-gray-400">Loading...</p>
             ) : (
               <div className="space-y-2 text-sm">
-                <p>Scores: <strong>{marks.score_count}</strong></p>
-                <p>Assessments: <strong>{marks.assessment_count}</strong></p>
-                <p>Average marks: <strong>{marks.avg_marks_obtained}</strong></p>
-                <p>Average percentage: <strong>{marks.avg_percentage}%</strong></p>
-                <p>Highest score: <strong>{marks.max_marks_obtained}</strong></p>
-                <p>Lowest score: <strong>{marks.min_marks_obtained}</strong></p>
+                <p>
+                  Scores: <strong>{marks.score_count}</strong>
+                </p>
+                <p>
+                  Assessments: <strong>{marks.assessment_count}</strong>
+                </p>
+                <p>
+                  Average marks: <strong>{marks.avg_marks_obtained}</strong>
+                </p>
+                <p>
+                  Average percentage: <strong>{marks.avg_percentage}%</strong>
+                </p>
+                <p>
+                  Highest score: <strong>{marks.max_marks_obtained}</strong>
+                </p>
+                <p>
+                  Lowest score: <strong>{marks.min_marks_obtained}</strong>
+                </p>
               </div>
             )}
           </div>
@@ -307,12 +437,24 @@ export default function ReportsPage() {
               <p className="text-gray-400">Loading...</p>
             ) : (
               <div className="space-y-2 text-sm">
-                <p>Total invoices: <strong>{fees.total_invoices}</strong></p>
-                <p>Paid count: <strong>{fees.paid_count}</strong></p>
-                <p>Overdue count: <strong>{fees.overdue_count}</strong></p>
-                <p>Total due: <strong>Rs. {fees.amount_due_total.toLocaleString()}</strong></p>
-                <p>Total paid: <strong>Rs. {fees.amount_paid_total.toLocaleString()}</strong></p>
-                <p>Outstanding: <strong>Rs. {fees.outstanding_total.toLocaleString()}</strong></p>
+                <p>
+                  Total invoices: <strong>{fees.total_invoices}</strong>
+                </p>
+                <p>
+                  Paid count: <strong>{fees.paid_count}</strong>
+                </p>
+                <p>
+                  Overdue count: <strong>{fees.overdue_count}</strong>
+                </p>
+                <p>
+                  Total due: <strong>Rs. {fees.amount_due_total.toLocaleString()}</strong>
+                </p>
+                <p>
+                  Total paid: <strong>Rs. {fees.amount_paid_total.toLocaleString()}</strong>
+                </p>
+                <p>
+                  Outstanding: <strong>Rs. {fees.outstanding_total.toLocaleString()}</strong>
+                </p>
               </div>
             )}
           </div>

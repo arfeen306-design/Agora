@@ -1,4 +1,4 @@
-# Agora Deployment (Step 20-28)
+# Agora Deployment (Step 20-29)
 
 This runbook deploys the backend stack (API + workers + PostgreSQL) using Docker Compose.
 
@@ -177,3 +177,22 @@ Use this endpoint for:
 
 - API burn-rate/error-budget monitoring
 - Worker queue depth/age/failed-pending threshold alerts
+
+## 13) Final Launch Checklist (Step 29)
+
+Run a one-command smoke test before go-live:
+
+```bash
+cd /Users/admin/Desktop/Agora
+INTERNAL_API_KEY="<INTERNAL_API_KEY>" ./scripts/prelaunch-check.sh
+```
+
+What it validates:
+
+- Required commands are available (`docker`, `curl`)
+- `.env.production` exists and does not contain obvious placeholder secrets
+- `api` and `postgres` containers are running in `docker-compose.prod.yml`
+- API health endpoint responds successfully
+- Internal SLO endpoint responds successfully (when `INTERNAL_API_KEY` is supplied)
+
+If the script exits non-zero, fix reported failures before continuing.

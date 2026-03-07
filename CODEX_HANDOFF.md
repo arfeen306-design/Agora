@@ -220,3 +220,14 @@
 - API calls go through `src/lib/api.ts` (web) / `lib/core/api_client.dart` (mobile)
 - Flutter Provider pattern for state management
 - Mobile app targets Parent/Student roles, web targets Teacher/Admin roles
+
+### Launch Readiness (Step 29)
+- Added prelaunch smoke-check script:
+  - `scripts/prelaunch-check.sh`
+- Validates:
+  - required commands (`docker`, `curl`)
+  - production env placeholders/empty secrets
+  - compose running status for `api` and `postgres`
+  - `/api/v1/health`
+  - `/api/v1/internal/observability/slo` (when `INTERNAL_API_KEY` is set)
+- Docker Compose production file cleaned by removing obsolete `version` field.
