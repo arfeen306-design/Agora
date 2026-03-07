@@ -1,5 +1,5 @@
 const STARTED_AT = new Date();
-const MAX_RECENT_REQUESTS = 100;
+const MAX_RECENT_REQUESTS = 5000;
 
 const state = {
   requests: {
@@ -80,8 +80,91 @@ function getObservabilitySnapshot() {
   };
 }
 
+function toFiniteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getWindowRequestSummary(windowMinutes) {
+  const minutes = Math.max(1, Math.floor(toFiniteNumber(windowMinutes, 1)));
+  const cutoff = Date.now() - minutes * 60 * 1000;
+  const relevant = state.requests.recent.filter((item) => {
+    const at = Date.parse(item.at || "");
+    return Number.isFinite(at) && at >= cutoff;
+  });
+
+  const total = relevant.length;
+  const successful = relevant.filter((item) => Number(item.status_code) < 500).length;
+  const failed = total - successful;
+  const availabilityPercent = total > 0 ? (successful / total) * 100 : 100;
+  const errorRateFraction = total > 0 ? failed / total : 0;
+
+  return {
+    window_minutes: minutes,
+    total_requests: total,
+    successful_requests: successful,
+    failed_requests: failed,
+    availability_percent: Math.round(availabilityPercent * 100) / 100,
+    error_rate_fraction: errorRateFraction,
+  };
+}
+
+function getSloSnapshot({
+  availabilityTargetPercent,
+  shortWindowMinutes,
+  longWindowMinutes,
+  burnRateWarning,
+  burnRateCritical,
+}) {
+  const targetPercent = Math.min(100, Math.max(90, toFiniteNumber(availabilityTargetPercent, 99.9)));
+  const warningThreshold = Math.max(0.1, toFiniteNumber(burnRateWarning, 2));
+  const criticalThreshold = Math.max(warningThreshold, toFiniteNumber(burnRateCritical, 4));
+  const shortSummary = getWindowRequestSummary(shortWindowMinutes);
+  const longSummary = getWindowRequestSummary(longWindowMinutes);
+  const allowedErrorFraction = Math.max(0.0001, (100 - targetPercent) / 100);
+  const shortBurnRate = shortSummary.error_rate_fraction / allowedErrorFraction;
+  const longBurnRate = longSummary.error_rate_fraction / allowedErrorFraction;
+  const budgetRemainingPercent = Math.max(0, 100 - longBurnRate * 100);
+
+  const alerts = [];
+  if (shortBurnRate >= criticalThreshold || longBurnRate >= criticalThreshold) {
+    alerts.push({
+      key: "api_error_budget_burn_rate",
+      severity: "critical",
+      message: "API error budget burn rate is above critical threshold",
+      short_burn_rate: Math.round(shortBurnRate * 100) / 100,
+      long_burn_rate: Math.round(longBurnRate * 100) / 100,
+      threshold: criticalThreshold,
+    });
+  } else if (shortBurnRate >= warningThreshold || longBurnRate >= warningThreshold) {
+    alerts.push({
+      key: "api_error_budget_burn_rate",
+      severity: "warning",
+      message: "API error budget burn rate is above warning threshold",
+      short_burn_rate: Math.round(shortBurnRate * 100) / 100,
+      long_burn_rate: Math.round(longBurnRate * 100) / 100,
+      threshold: warningThreshold,
+    });
+  }
+
+  return {
+    target_availability_percent: targetPercent,
+    short_window: {
+      ...shortSummary,
+      burn_rate: Math.round(shortBurnRate * 100) / 100,
+    },
+    long_window: {
+      ...longSummary,
+      burn_rate: Math.round(longBurnRate * 100) / 100,
+    },
+    error_budget_remaining_percent: Math.round(budgetRemainingPercent * 100) / 100,
+    alerts,
+  };
+}
+
 module.exports = {
   recordRequest,
   recordError,
   getObservabilitySnapshot,
+  getSloSnapshot,
 };

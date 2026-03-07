@@ -1,4 +1,4 @@
-# Agora Deployment (Step 20)
+# Agora Deployment (Step 20-25)
 
 This runbook deploys the backend stack (API + workers + PostgreSQL) using Docker Compose.
 
@@ -100,3 +100,37 @@ Automated drill workflow:
 
 - GitHub Actions workflow: `DR Backup Restore Drill`
 - Runs weekly and can be triggered manually from Actions tab
+
+## 9) Managed Infra Automation (Step 24)
+
+Terraform stack path:
+
+- `/Users/admin/Desktop/Agora/infra/terraform/aws`
+
+Run:
+
+```bash
+cd /Users/admin/Desktop/Agora/infra/terraform/aws
+cp terraform.tfvars.example terraform.tfvars
+terraform init
+terraform plan
+terraform apply
+```
+
+CI validation workflow:
+
+- `.github/workflows/infra-validate.yml`
+
+## 10) SLO + Alerting Endpoint (Step 25)
+
+Internal monitoring endpoint:
+
+```bash
+curl -s http://127.0.0.1:8080/api/v1/internal/observability/slo \
+  -H "X-Internal-Api-Key: <INTERNAL_API_KEY>"
+```
+
+Use this endpoint for:
+
+- API burn-rate/error-budget monitoring
+- Worker queue depth/age/failed-pending threshold alerts

@@ -1198,6 +1198,25 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimitedError'
 
+  /internal/observability/slo:
+    get:
+      tags: [Internal]
+      operationId: internalSloSnapshot
+      summary: Internal SLO and worker queue alert snapshot
+      security:
+        - InternalApiKey: []
+      responses:
+        '200':
+          description: SLO snapshot and active alerts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SloObservabilityResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitedError'
+
   /internal/notifications/trigger:
     post:
       tags: [Internal]
@@ -2736,6 +2755,114 @@ components:
             timestamp:
               type: string
               format: date-time
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    SloWindowSnapshot:
+      type: object
+      properties:
+        window_minutes:
+          type: integer
+        total_requests:
+          type: integer
+        successful_requests:
+          type: integer
+        failed_requests:
+          type: integer
+        availability_percent:
+          type: number
+        burn_rate:
+          type: number
+
+    SloAlert:
+      type: object
+      properties:
+        key:
+          type: string
+        severity:
+          type: string
+          enum: [warning, critical]
+        message:
+          type: string
+        value:
+          type: number
+          nullable: true
+        threshold:
+          type: number
+          nullable: true
+        short_burn_rate:
+          type: number
+          nullable: true
+        long_burn_rate:
+          type: number
+          nullable: true
+
+    WorkerNotificationsSnapshot:
+      type: object
+      properties:
+        queued_count:
+          type: integer
+        failed_with_retry_remaining:
+          type: integer
+        oldest_queued_minutes:
+          type: number
+        last_sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        thresholds:
+          type: object
+          properties:
+            queue_warning:
+              type: number
+            queue_critical:
+              type: number
+            oldest_queued_minutes_warning:
+              type: number
+            oldest_queued_minutes_critical:
+              type: number
+            failed_pending_warning:
+              type: number
+            failed_pending_critical:
+              type: number
+
+    SloObservabilityResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            service:
+              type: string
+            generated_at:
+              type: string
+              format: date-time
+            slo:
+              type: object
+              properties:
+                target_availability_percent:
+                  type: number
+                short_window:
+                  $ref: '#/components/schemas/SloWindowSnapshot'
+                long_window:
+                  $ref: '#/components/schemas/SloWindowSnapshot'
+                error_budget_remaining_percent:
+                  type: number
+                alerts:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/SloAlert'
+            workers:
+              type: object
+              properties:
+                notifications:
+                  $ref: '#/components/schemas/WorkerNotificationsSnapshot'
+            alerts:
+              type: array
+              items:
+                $ref: '#/components/schemas/SloAlert'
         meta:
           $ref: '#/components/schemas/Meta'
 

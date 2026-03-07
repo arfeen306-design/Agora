@@ -111,6 +111,36 @@
   - Uploads backup artifact
 - Deployment runbook updated with drill instructions (`DEPLOYMENT.md`)
 
+### Infra Automation (Step 24)
+- Added Terraform stack:
+  - `infra/terraform/aws/providers.tf`
+  - `infra/terraform/aws/variables.tf`
+  - `infra/terraform/aws/main.tf`
+  - `infra/terraform/aws/outputs.tf`
+  - `infra/terraform/aws/terraform.tfvars.example`
+  - `infra/terraform/aws/README.md`
+- Provisions:
+  - Managed Postgres (RDS)
+  - Secrets Manager credentials (generated password)
+  - CloudWatch alarms + SNS topic (DB + worker queue)
+- Added workflow:
+  - `.github/workflows/infra-validate.yml`
+  - Runs terraform fmt/init/validate on infra changes
+
+### SLO + Alerting Polish (Step 25)
+- New internal endpoint:
+  - `GET /api/v1/internal/observability/slo`
+- Computes:
+  - API availability windows and burn rate against SLO target
+  - Error budget remaining %
+  - Worker queue alerts (depth, oldest queued age, failed-pending retries)
+- Updated:
+  - `src/utils/observability.js` (SLO math)
+  - `src/routes/observability.js` (new endpoint + alert evaluation)
+  - `src/config.js` and env templates for SLO/threshold settings
+  - OpenAPI schema/paths
+  - API tests for internal SLO endpoint
+
 ## What Claude Code Has Built (DO NOT DUPLICATE)
 
 ### Web Dashboard (agora-web/)
@@ -137,12 +167,11 @@
 - Both registered in `routes/index.js`
 
 ### What Codex Should Focus On Next
-- CI/CD pipeline (GitHub Actions)
-- Automated tests (Jest/Supertest for API)
-- RFID/QR hardware integration endpoints
-- Cloud deployment configs (AWS/GCP)
-- Remove legacy Flask files (app.py, school.db, templates/, venv/)
-- Firebase Cloud Messaging integration for push notifications
+- Keep backend stable and avoid overlap with Claude frontend work
+- Production rollout tasks:
+  - Wire runtime to Secrets Manager output from Terraform
+  - Publish SLO worker queue metrics to CloudWatch namespace `Agora/Workers`
+  - Tune SLO/worker thresholds after one week of real traffic
 
 ### Architecture Decisions Made
 - Next.js App Router (not Pages Router) for web

@@ -27,10 +27,9 @@ API base:
 - API contract notes: `/Users/admin/Desktop/Agora/api/contract.md`
 - DB schema: `/Users/admin/Desktop/Agora/database/agora_schema.sql`
 
-## Next Implementation
+## Backend Status
 
-1. Infra automation (managed DB, secrets manager, monitoring)
-2. SLO/alerting polish (error budget + worker alert thresholds)
+Core backend roadmap through Step 25 is now implemented in this repo.
 
 ## Step 5 Auth (Implemented)
 
@@ -489,3 +488,50 @@ Automated drill workflow:
   - Manual (`workflow_dispatch`)
   - Weekly schedule (Sunday 02:00 UTC)
 - Uploads backup artifact from drill run
+
+## Step 24 Infra Automation (Managed DB + Secrets + Monitoring) (Implemented)
+
+Terraform stack:
+
+- `/Users/admin/Desktop/Agora/infra/terraform/aws/providers.tf`
+- `/Users/admin/Desktop/Agora/infra/terraform/aws/main.tf`
+- `/Users/admin/Desktop/Agora/infra/terraform/aws/variables.tf`
+- `/Users/admin/Desktop/Agora/infra/terraform/aws/outputs.tf`
+- `/Users/admin/Desktop/Agora/infra/terraform/aws/terraform.tfvars.example`
+
+What it provisions:
+
+- AWS RDS PostgreSQL (encrypted, Multi-AZ option, backups)
+- AWS Secrets Manager secret with generated DB credentials + connection URL
+- CloudWatch alarms + SNS topic for DB health and worker queue signals
+
+CI validation:
+
+- `.github/workflows/infra-validate.yml`
+- Runs `terraform fmt -check`, `terraform init -backend=false`, and `terraform validate`
+
+## Step 25 SLO + Alerting Polish (Implemented)
+
+New internal endpoint:
+
+- `GET /api/v1/internal/observability/slo` (requires `X-Internal-Api-Key`)
+
+What it returns:
+
+- API availability windows (short + long), burn rates, and error-budget remaining
+- Worker queue signal snapshot (`queued_count`, `oldest_queued_minutes`, `failed_with_retry_remaining`)
+- Active warning/critical alerts based on configured thresholds
+
+New env keys:
+
+- `SLO_AVAILABILITY_TARGET_PERCENT`
+- `SLO_SHORT_WINDOW_MINUTES`
+- `SLO_LONG_WINDOW_MINUTES`
+- `SLO_BURN_RATE_WARNING`
+- `SLO_BURN_RATE_CRITICAL`
+- `ALERT_WORKER_QUEUE_DEPTH_WARNING`
+- `ALERT_WORKER_QUEUE_DEPTH_CRITICAL`
+- `ALERT_WORKER_OLDEST_QUEUED_MINUTES_WARNING`
+- `ALERT_WORKER_OLDEST_QUEUED_MINUTES_CRITICAL`
+- `ALERT_WORKER_FAILED_PENDING_WARNING`
+- `ALERT_WORKER_FAILED_PENDING_CRITICAL`

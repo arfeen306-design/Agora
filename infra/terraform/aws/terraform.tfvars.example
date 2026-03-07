@@ -1,0 +1,23 @@
+aws_region = "us-east-1"
+project_name = "agora"
+environment = "prod"
+
+vpc_id = "vpc-xxxxxxxx"
+db_subnet_ids = ["subnet-private-a", "subnet-private-b"]
+app_security_group_ids = ["sg-api-xxxxxxxx"]
+
+db_instance_class = "db.t4g.medium"
+db_allocated_storage_gb = 100
+db_max_storage_gb = 500
+db_name = "agora"
+db_username = "agora_app"
+db_backup_retention_days = 14
+db_multi_az = true
+
+alert_email = "alerts@agora.school"
+
+worker_metrics_namespace = "Agora/Workers"
+worker_service_dimension = "agora-api"
+worker_queue_depth_warning = 500
+worker_oldest_queued_minutes_warning = 30
+worker_failed_pending_warning = 100

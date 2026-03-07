@@ -288,3 +288,19 @@ test("internal observability metrics requires internal key", async () => {
   assert.equal(allowed.body?.data?.service, "agora-api");
   assert.equal(typeof allowed.body?.data?.requests?.total, "number");
 });
+
+test("internal observability slo endpoint returns alert payload shape", async () => {
+  const denied = await jsonRequest("/api/v1/internal/observability/slo");
+  assert.equal(denied.status, 401);
+
+  const allowed = await jsonRequest("/api/v1/internal/observability/slo", {
+    headers: { "X-Internal-Api-Key": internalApiKey },
+  });
+
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.body?.success, true);
+  assert.equal(allowed.body?.data?.service, "agora-api");
+  assert.equal(typeof allowed.body?.data?.slo?.target_availability_percent, "number");
+  assert.equal(typeof allowed.body?.data?.workers?.notifications?.queued_count, "number");
+  assert.ok(Array.isArray(allowed.body?.data?.alerts));
+});

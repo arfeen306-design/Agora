@@ -94,6 +94,21 @@ const config = {
       enabled: asBool(process.env.REMINDER_FEE_OVERDUE_ENABLED, true),
     },
   },
+  slo: {
+    availabilityTargetPercent: Number(process.env.SLO_AVAILABILITY_TARGET_PERCENT || 99.9),
+    shortWindowMinutes: Number(process.env.SLO_SHORT_WINDOW_MINUTES || 5),
+    longWindowMinutes: Number(process.env.SLO_LONG_WINDOW_MINUTES || 60),
+    burnRateWarning: Number(process.env.SLO_BURN_RATE_WARNING || 2),
+    burnRateCritical: Number(process.env.SLO_BURN_RATE_CRITICAL || 4),
+  },
+  alerts: {
+    workerQueueDepthWarning: Number(process.env.ALERT_WORKER_QUEUE_DEPTH_WARNING || 100),
+    workerQueueDepthCritical: Number(process.env.ALERT_WORKER_QUEUE_DEPTH_CRITICAL || 500),
+    workerOldestQueuedMinutesWarning: Number(process.env.ALERT_WORKER_OLDEST_QUEUED_MINUTES_WARNING || 10),
+    workerOldestQueuedMinutesCritical: Number(process.env.ALERT_WORKER_OLDEST_QUEUED_MINUTES_CRITICAL || 30),
+    workerFailedPendingWarning: Number(process.env.ALERT_WORKER_FAILED_PENDING_WARNING || 25),
+    workerFailedPendingCritical: Number(process.env.ALERT_WORKER_FAILED_PENDING_CRITICAL || 100),
+  },
   storage: {
     provider: process.env.STORAGE_PROVIDER || "local", // local | s3 | gcs
     bucket: process.env.STORAGE_BUCKET || "agora-dev",

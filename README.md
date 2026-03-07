@@ -12,9 +12,9 @@ This folder is now the single source of truth for the Agora project.
 
 ## Current Phase
 
-- Step 2 completed: database schema
-- Step 3 completed: API contract + OpenAPI YAML
-- Step 4 started: workspace/repo setup
+- Backend milestones through Step 25 completed (auth, modules, workers, tests, CI/CD, infra automation, SLO alerting)
+- Web + mobile clients are active in parallel (`agora-web`, `agora-mobile`)
+- Current focus: production rollout and frontend integration
 
 ## Quick Start (Backend)
 
