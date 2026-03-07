@@ -101,6 +101,16 @@
   - `database/migrations/20260307_tenant_rls.sql`
   - Adds tenant policy helper function and enables RLS policies on school-scoped tables
 
+### Backup/Restore Drills + DR Runbook (Step 23)
+- Added drill script:
+  - `database/scripts/backup_restore_drill.sh`
+  - Backs up production DB, restores into temporary drill DB, validates table count, cleans up
+- Added CI drill workflow:
+  - `.github/workflows/dr-backup-drill.yml`
+  - Manual + weekly run
+  - Uploads backup artifact
+- Deployment runbook updated with drill instructions (`DEPLOYMENT.md`)
+
 ## What Claude Code Has Built (DO NOT DUPLICATE)
 
 ### Web Dashboard (agora-web/)

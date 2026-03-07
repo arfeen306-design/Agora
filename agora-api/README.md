@@ -31,7 +31,6 @@ API base:
 
 1. Infra automation (managed DB, secrets manager, monitoring)
 2. SLO/alerting polish (error budget + worker alert thresholds)
-3. Backup/restore drills + disaster recovery runbooks
 
 ## Step 5 Auth (Implemented)
 
@@ -464,3 +463,29 @@ Apply on existing DB:
 ```bash
 psql -h 127.0.0.1 -U agora_user -d agora -f /Users/admin/Desktop/Agora/database/migrations/20260307_tenant_rls.sql
 ```
+
+## Step 23 Backup/Restore Drills + DR Runbook (Implemented)
+
+Backup/restore drill script:
+
+- `/Users/admin/Desktop/Agora/database/scripts/backup_restore_drill.sh`
+- Creates DB dump, restores into temporary drill database, validates restored table count, then drops drill DB
+
+Manual run:
+
+```bash
+DB_HOST=127.0.0.1 \
+DB_PORT=5432 \
+DB_NAME=agora \
+DB_USER=agora_user \
+DB_PASSWORD=change_me \
+bash /Users/admin/Desktop/Agora/database/scripts/backup_restore_drill.sh
+```
+
+Automated drill workflow:
+
+- `.github/workflows/dr-backup-drill.yml`
+- Triggers:
+  - Manual (`workflow_dispatch`)
+  - Weekly schedule (Sunday 02:00 UTC)
+- Uploads backup artifact from drill run

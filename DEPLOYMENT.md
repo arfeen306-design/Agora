@@ -82,3 +82,21 @@ docker compose -f docker-compose.prod.yml logs -f worker-notifications
   - run API tests
   - build image from `agora-api/Dockerfile`
   - push image to GHCR
+
+## 8) Backup + Restore Drill
+
+Manual drill command:
+
+```bash
+DB_HOST=127.0.0.1 \
+DB_PORT=5432 \
+DB_NAME=agora \
+DB_USER=agora_user \
+DB_PASSWORD=change_me \
+bash /opt/agora/database/scripts/backup_restore_drill.sh
+```
+
+Automated drill workflow:
+
+- GitHub Actions workflow: `DR Backup Restore Drill`
+- Runs weekly and can be triggered manually from Actions tab
