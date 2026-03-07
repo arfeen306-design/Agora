@@ -23,6 +23,31 @@ interface ApiResponse<T = unknown> {
   };
 }
 
+export interface LookupClassroom {
+  id: string;
+  grade_label: string;
+  section_label: string;
+  academic_year_name: string;
+  label: string;
+}
+
+export interface LookupStudent {
+  id: string;
+  student_code: string;
+  first_name: string;
+  last_name: string | null;
+  classroom_id: string;
+  classroom_label: string;
+  label: string;
+}
+
+export interface LookupSubject {
+  id: string;
+  code: string;
+  name: string;
+  label: string;
+}
+
 class ApiError extends Error {
   code: string;
   status: number;
@@ -187,6 +212,36 @@ export async function markAttendanceBulk(data: {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+// ─── Lookup helpers ───
+export async function getLookupClassrooms(params: { search?: string; page_size?: number } = {}) {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  const res = await request<LookupClassroom[]>(`/lookups/classrooms${suffix ? `?${suffix}` : ""}`);
+  return res.data;
+}
+
+export async function getLookupStudents(params: { classroom_id?: string; search?: string; page_size?: number } = {}) {
+  const query = new URLSearchParams();
+  if (params.classroom_id) query.set("classroom_id", params.classroom_id);
+  if (params.search) query.set("search", params.search);
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  const res = await request<LookupStudent[]>(`/lookups/students${suffix ? `?${suffix}` : ""}`);
+  return res.data;
+}
+
+export async function getLookupSubjects(params: { classroom_id?: string; search?: string; page_size?: number } = {}) {
+  const query = new URLSearchParams();
+  if (params.classroom_id) query.set("classroom_id", params.classroom_id);
+  if (params.search) query.set("search", params.search);
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  const res = await request<LookupSubject[]>(`/lookups/subjects${suffix ? `?${suffix}` : ""}`);
+  return res.data;
 }
 
 // ─── Homework ───

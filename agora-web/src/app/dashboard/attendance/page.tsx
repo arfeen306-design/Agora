@@ -2,7 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Header from "@/components/Header";
-import { getAttendance, markAttendanceBulk } from "@/lib/api";
+import {
+  getAttendance,
+  markAttendanceBulk,
+  getLookupClassrooms,
+  getLookupStudents,
+  type LookupClassroom,
+  type LookupStudent,
+} from "@/lib/api";
 
 interface AttendanceRecord {
   id: string;
@@ -28,16 +35,39 @@ export default function AttendancePage() {
   const [classroomFilter, setClassroomFilter] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [classrooms, setClassrooms] = useState<LookupClassroom[]>([]);
 
   // Bulk marking state
   const [showBulkForm, setShowBulkForm] = useState(false);
   const [bulkClassroom, setBulkClassroom] = useState("");
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().split("T")[0]);
   const [bulkEntries, setBulkEntries] = useState<BulkEntry[]>([]);
+  const [bulkStudents, setBulkStudents] = useState<LookupStudent[]>([]);
   const [bulkStudentId, setBulkStudentId] = useState("");
-  const [bulkStudentName, setBulkStudentName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
+  const loadClassrooms = useCallback(async () => {
+    try {
+      const data = await getLookupClassrooms({ page_size: 200 });
+      setClassrooms(data);
+    } catch {
+      setClassrooms([]);
+    }
+  }, []);
+
+  const loadBulkStudents = useCallback(async (classroomId: string) => {
+    if (!classroomId) {
+      setBulkStudents([]);
+      return;
+    }
+    try {
+      const data = await getLookupStudents({ classroom_id: classroomId, page_size: 200 });
+      setBulkStudents(data);
+    } catch {
+      setBulkStudents([]);
+    }
+  }, []);
 
   const loadRecords = useCallback(async () => {
     setLoading(true);
@@ -64,15 +94,26 @@ export default function AttendancePage() {
     loadRecords();
   }, [loadRecords]);
 
+  useEffect(() => {
+    loadClassrooms();
+  }, [loadClassrooms]);
+
+  useEffect(() => {
+    loadBulkStudents(bulkClassroom);
+  }, [bulkClassroom, loadBulkStudents]);
+
   function addBulkEntry() {
-    if (!bulkStudentId.trim()) return;
+    if (!bulkStudentId) return;
+    const selectedStudent = bulkStudents.find((s) => s.id === bulkStudentId);
+    if (!selectedStudent) return;
+    if (bulkEntries.some((entry) => entry.student_id === bulkStudentId)) return;
+
     setBulkEntries([...bulkEntries, {
-      student_id: bulkStudentId.trim(),
-      name: bulkStudentName.trim() || bulkStudentId.trim(),
+      student_id: selectedStudent.id,
+      name: selectedStudent.label,
       status: "present",
     }]);
     setBulkStudentId("");
-    setBulkStudentName("");
   }
 
   function updateEntryStatus(index: number, status: BulkEntry["status"]) {
@@ -138,14 +179,22 @@ export default function AttendancePage() {
             />
           </div>
           <div>
-            <label className="label-text">Classroom ID</label>
-            <input
-              type="text"
+            <label className="label-text">Classroom</label>
+            <select
               className="input-field"
-              placeholder="Filter by classroom"
               value={classroomFilter}
-              onChange={(e) => { setClassroomFilter(e.target.value); setPage(1); }}
-            />
+              onChange={(e) => {
+                setClassroomFilter(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All classrooms</option>
+              {classrooms.map((classroom) => (
+                <option key={classroom.id} value={classroom.id}>
+                  {classroom.label}
+                </option>
+              ))}
+            </select>
           </div>
           <button className="btn-primary" onClick={() => setShowBulkForm(!showBulkForm)}>
             {showBulkForm ? "Cancel" : "Mark Attendance"}
@@ -158,8 +207,19 @@ export default function AttendancePage() {
             <h3 className="text-lg font-semibold mb-4">Bulk Mark Attendance</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="label-text">Classroom ID</label>
-                <input type="text" className="input-field" value={bulkClassroom} onChange={(e) => setBulkClassroom(e.target.value)} placeholder="Paste classroom UUID" />
+                <label className="label-text">Classroom</label>
+                <select
+                  className="input-field"
+                  value={bulkClassroom}
+                  onChange={(e) => setBulkClassroom(e.target.value)}
+                >
+                  <option value="">Select classroom</option>
+                  {classrooms.map((classroom) => (
+                    <option key={classroom.id} value={classroom.id}>
+                      {classroom.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="label-text">Date</label>
@@ -168,8 +228,19 @@ export default function AttendancePage() {
             </div>
 
             <div className="flex gap-2 mb-4">
-              <input type="text" className="input-field flex-1" placeholder="Student UUID" value={bulkStudentId} onChange={(e) => setBulkStudentId(e.target.value)} />
-              <input type="text" className="input-field flex-1" placeholder="Student name (optional)" value={bulkStudentName} onChange={(e) => setBulkStudentName(e.target.value)} />
+              <select
+                className="input-field flex-1"
+                value={bulkStudentId}
+                onChange={(e) => setBulkStudentId(e.target.value)}
+                disabled={!bulkClassroom}
+              >
+                <option value="">{bulkClassroom ? "Select student" : "Select classroom first"}</option>
+                {bulkStudents.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.label} ({student.student_code})
+                  </option>
+                ))}
+              </select>
               <button className="btn-secondary" onClick={addBulkEntry}>Add</button>
             </div>
 

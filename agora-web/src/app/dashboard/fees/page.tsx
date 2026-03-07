@@ -3,7 +3,15 @@
 import { useEffect, useState, useCallback } from "react";
 import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
-import { getFeePlans, createFeePlan, getFeeInvoices, createFeeInvoice, recordPayment } from "@/lib/api";
+import {
+  getFeePlans,
+  createFeePlan,
+  getFeeInvoices,
+  createFeeInvoice,
+  recordPayment,
+  getLookupStudents,
+  type LookupStudent,
+} from "@/lib/api";
 
 interface FeePlan {
   id: string;
@@ -28,7 +36,9 @@ export default function FeesPage() {
   const { isAdmin } = useAuth();
   const [tab, setTab] = useState<"plans" | "invoices">("invoices");
   const [plans, setPlans] = useState<FeePlan[]>([]);
+  const [planOptions, setPlanOptions] = useState<FeePlan[]>([]);
   const [invoices, setInvoices] = useState<FeeInvoice[]>([]);
+  const [students, setStudents] = useState<LookupStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -43,6 +53,20 @@ export default function FeesPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
+  const loadInvoiceLookups = useCallback(async () => {
+    try {
+      const [studentsData, plansRes] = await Promise.all([
+        getLookupStudents({ page_size: 200 }),
+        getFeePlans({ page: "1", page_size: "200", is_active: "true" }),
+      ]);
+      setStudents(studentsData);
+      setPlanOptions(plansRes.data as FeePlan[]);
+    } catch {
+      setStudents([]);
+      setPlanOptions([]);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -68,6 +92,10 @@ export default function FeesPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    loadInvoiceLookups();
+  }, [loadInvoiceLookups]);
+
   async function handleCreatePlan() {
     if (!planForm.title || !planForm.amount) return;
     setSubmitting(true);
@@ -90,7 +118,7 @@ export default function FeesPage() {
   }
 
   async function handleCreateInvoice() {
-    if (!invoiceForm.student_id || !invoiceForm.amount_due || !invoiceForm.due_date) return;
+    if (!invoiceForm.student_id || !invoiceForm.fee_plan_id || !invoiceForm.amount_due || !invoiceForm.due_date) return;
     setSubmitting(true);
     setMessage("");
     try {
@@ -248,12 +276,34 @@ export default function FeesPage() {
                 <h3 className="text-lg font-semibold mb-4">New Invoice</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                   <div>
-                    <label className="label-text">Student ID *</label>
-                    <input type="text" className="input-field" placeholder="Student UUID" value={invoiceForm.student_id} onChange={(e) => setInvoiceForm({ ...invoiceForm, student_id: e.target.value })} />
+                    <label className="label-text">Student *</label>
+                    <select
+                      className="input-field"
+                      value={invoiceForm.student_id}
+                      onChange={(e) => setInvoiceForm({ ...invoiceForm, student_id: e.target.value })}
+                    >
+                      <option value="">Select student</option>
+                      {students.map((student) => (
+                        <option key={student.id} value={student.id}>
+                          {student.label} ({student.student_code})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
-                    <label className="label-text">Fee Plan ID</label>
-                    <input type="text" className="input-field" placeholder="Optional" value={invoiceForm.fee_plan_id} onChange={(e) => setInvoiceForm({ ...invoiceForm, fee_plan_id: e.target.value })} />
+                    <label className="label-text">Fee Plan *</label>
+                    <select
+                      className="input-field"
+                      value={invoiceForm.fee_plan_id}
+                      onChange={(e) => setInvoiceForm({ ...invoiceForm, fee_plan_id: e.target.value })}
+                    >
+                      <option value="">Select fee plan</option>
+                      {planOptions.map((plan) => (
+                        <option key={plan.id} value={plan.id}>
+                          {plan.title} (Rs. {Number(plan.amount).toLocaleString()})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="label-text">Amount Due *</label>

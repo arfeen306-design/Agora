@@ -2,7 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Header from "@/components/Header";
-import { getHomework, createHomework } from "@/lib/api";
+import {
+  getHomework,
+  createHomework,
+  getLookupClassrooms,
+  getLookupSubjects,
+  type LookupClassroom,
+  type LookupSubject,
+} from "@/lib/api";
 
 interface Homework {
   id: string;
@@ -20,6 +27,8 @@ export default function HomeworkPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [classrooms, setClassrooms] = useState<LookupClassroom[]>([]);
+  const [subjects, setSubjects] = useState<LookupSubject[]>([]);
 
   // Create form
   const [showForm, setShowForm] = useState(false);
@@ -32,6 +41,27 @@ export default function HomeworkPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
+  const loadClassrooms = useCallback(async () => {
+    try {
+      const data = await getLookupClassrooms({ page_size: 200 });
+      setClassrooms(data);
+    } catch {
+      setClassrooms([]);
+    }
+  }, []);
+
+  const loadSubjects = useCallback(async (classroomId?: string) => {
+    try {
+      const data = await getLookupSubjects({
+        page_size: 200,
+        classroom_id: classroomId || undefined,
+      });
+      setSubjects(data);
+    } catch {
+      setSubjects([]);
+    }
+  }, []);
 
   const loadHomework = useCallback(async () => {
     setLoading(true);
@@ -49,6 +79,14 @@ export default function HomeworkPage() {
   useEffect(() => {
     loadHomework();
   }, [loadHomework]);
+
+  useEffect(() => {
+    loadClassrooms();
+  }, [loadClassrooms]);
+
+  useEffect(() => {
+    loadSubjects(formData.classroom_id);
+  }, [formData.classroom_id, loadSubjects]);
 
   async function handleCreate() {
     if (!formData.classroom_id || !formData.title) return;
@@ -95,12 +133,35 @@ export default function HomeworkPage() {
             <h3 className="text-lg font-semibold mb-4">New Homework</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="label-text">Classroom ID *</label>
-                <input type="text" className="input-field" placeholder="Classroom UUID" value={formData.classroom_id} onChange={(e) => setFormData({ ...formData, classroom_id: e.target.value })} />
+                <label className="label-text">Classroom *</label>
+                <select
+                  className="input-field"
+                  value={formData.classroom_id}
+                  onChange={(e) => setFormData({ ...formData, classroom_id: e.target.value, subject_id: "" })}
+                >
+                  <option value="">Select classroom</option>
+                  {classrooms.map((classroom) => (
+                    <option key={classroom.id} value={classroom.id}>
+                      {classroom.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="label-text">Subject ID</label>
-                <input type="text" className="input-field" placeholder="Subject UUID (optional)" value={formData.subject_id} onChange={(e) => setFormData({ ...formData, subject_id: e.target.value })} />
+                <label className="label-text">Subject</label>
+                <select
+                  className="input-field"
+                  value={formData.subject_id}
+                  onChange={(e) => setFormData({ ...formData, subject_id: e.target.value })}
+                  disabled={!formData.classroom_id}
+                >
+                  <option value="">{formData.classroom_id ? "Optional subject" : "Select classroom first"}</option>
+                  {subjects.map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="label-text">Title *</label>

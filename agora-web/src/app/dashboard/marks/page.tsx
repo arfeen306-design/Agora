@@ -2,7 +2,17 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Header from "@/components/Header";
-import { getAssessments, createAssessment, bulkScores } from "@/lib/api";
+import {
+  getAssessments,
+  createAssessment,
+  bulkScores,
+  getLookupClassrooms,
+  getLookupSubjects,
+  getLookupStudents,
+  type LookupClassroom,
+  type LookupSubject,
+  type LookupStudent,
+} from "@/lib/api";
 
 interface Assessment {
   id: string;
@@ -25,6 +35,9 @@ export default function MarksPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [classrooms, setClassrooms] = useState<LookupClassroom[]>([]);
+  const [subjects, setSubjects] = useState<LookupSubject[]>([]);
+  const [scoreStudents, setScoreStudents] = useState<LookupStudent[]>([]);
 
   // Create form
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -45,6 +58,43 @@ export default function MarksPage() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
+  const loadClassrooms = useCallback(async () => {
+    try {
+      const data = await getLookupClassrooms({ page_size: 200 });
+      setClassrooms(data);
+    } catch {
+      setClassrooms([]);
+    }
+  }, []);
+
+  const loadSubjects = useCallback(async (classroomId?: string) => {
+    try {
+      const data = await getLookupSubjects({
+        page_size: 200,
+        classroom_id: classroomId || undefined,
+      });
+      setSubjects(data);
+    } catch {
+      setSubjects([]);
+    }
+  }, []);
+
+  const loadScoreStudents = useCallback(async (classroomId?: string) => {
+    if (!classroomId) {
+      setScoreStudents([]);
+      return;
+    }
+    try {
+      const data = await getLookupStudents({
+        classroom_id: classroomId,
+        page_size: 200,
+      });
+      setScoreStudents(data);
+    } catch {
+      setScoreStudents([]);
+    }
+  }, []);
+
   const loadAssessments = useCallback(async () => {
     setLoading(true);
     try {
@@ -61,6 +111,18 @@ export default function MarksPage() {
   useEffect(() => {
     loadAssessments();
   }, [loadAssessments]);
+
+  useEffect(() => {
+    loadClassrooms();
+  }, [loadClassrooms]);
+
+  useEffect(() => {
+    loadSubjects(formData.classroom_id);
+  }, [formData.classroom_id, loadSubjects]);
+
+  useEffect(() => {
+    loadScoreStudents(selectedAssessment?.classroom_id);
+  }, [selectedAssessment?.classroom_id, loadScoreStudents]);
 
   async function handleCreate() {
     if (!formData.classroom_id || !formData.title) return;
@@ -88,6 +150,7 @@ export default function MarksPage() {
 
   function addScore() {
     if (!newScore.student_id || !newScore.marks) return;
+    if (scores.some((s) => s.student_id === newScore.student_id)) return;
     setScores([...scores, {
       student_id: newScore.student_id,
       marks_obtained: Number(newScore.marks),
@@ -145,12 +208,35 @@ export default function MarksPage() {
             <h3 className="text-lg font-semibold mb-4">New Assessment</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
               <div>
-                <label className="label-text">Classroom ID *</label>
-                <input type="text" className="input-field" placeholder="Classroom UUID" value={formData.classroom_id} onChange={(e) => setFormData({ ...formData, classroom_id: e.target.value })} />
+                <label className="label-text">Classroom *</label>
+                <select
+                  className="input-field"
+                  value={formData.classroom_id}
+                  onChange={(e) => setFormData({ ...formData, classroom_id: e.target.value, subject_id: "" })}
+                >
+                  <option value="">Select classroom</option>
+                  {classrooms.map((classroom) => (
+                    <option key={classroom.id} value={classroom.id}>
+                      {classroom.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="label-text">Subject ID</label>
-                <input type="text" className="input-field" placeholder="Optional" value={formData.subject_id} onChange={(e) => setFormData({ ...formData, subject_id: e.target.value })} />
+                <label className="label-text">Subject</label>
+                <select
+                  className="input-field"
+                  value={formData.subject_id}
+                  onChange={(e) => setFormData({ ...formData, subject_id: e.target.value })}
+                  disabled={!formData.classroom_id}
+                >
+                  <option value="">{formData.classroom_id ? "Optional subject" : "Select classroom first"}</option>
+                  {subjects.map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="label-text">Type</label>
@@ -189,7 +275,18 @@ export default function MarksPage() {
               <button className="text-sm text-gray-500 hover:text-gray-700" onClick={() => { setSelectedAssessment(null); setScores([]); }}>Close</button>
             </div>
             <div className="flex gap-2 mb-4">
-              <input type="text" className="input-field flex-1" placeholder="Student UUID" value={newScore.student_id} onChange={(e) => setNewScore({ ...newScore, student_id: e.target.value })} />
+              <select
+                className="input-field flex-1"
+                value={newScore.student_id}
+                onChange={(e) => setNewScore({ ...newScore, student_id: e.target.value })}
+              >
+                <option value="">Select student</option>
+                {scoreStudents.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.label} ({student.student_code})
+                  </option>
+                ))}
+              </select>
               <input type="number" className="input-field w-28" placeholder="Marks" max={selectedAssessment.max_marks} value={newScore.marks} onChange={(e) => setNewScore({ ...newScore, marks: e.target.value })} />
               <input type="text" className="input-field flex-1" placeholder="Remarks (optional)" value={newScore.remarks} onChange={(e) => setNewScore({ ...newScore, remarks: e.target.value })} />
               <button className="btn-secondary" onClick={addScore}>Add</button>
