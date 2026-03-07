@@ -1,4 +1,4 @@
-# Agora Deployment (Step 20-25)
+# Agora Deployment (Step 20-27)
 
 This runbook deploys the backend stack (API + workers + PostgreSQL) using Docker Compose.
 
@@ -121,7 +121,29 @@ CI validation workflow:
 
 - `.github/workflows/infra-validate.yml`
 
-## 10) SLO + Alerting Endpoint (Step 25)
+## 10) Secrets Manager Runtime Wiring (Step 27)
+
+After Terraform apply, use output `db_credentials_secret_arn` and inject that secret into runtime env as:
+
+- `DB_CREDENTIALS_SECRET_JSON` (recommended)
+- or `DB_CREDENTIALS_SECRET_BASE64` (optional if your platform requires base64)
+
+The API now auto-parses this secret JSON (`host`, `port`, `dbname/database`, `username/user`, `password`, optional `sslmode/url`) and overrides manual `DB_*` values.
+
+Example secret payload (matches Terraform output):
+
+```json
+{
+  "host": "agora-prod-postgres.abc123.us-east-1.rds.amazonaws.com",
+  "port": 5432,
+  "dbname": "agora",
+  "username": "agora_app",
+  "password": "generated_password_here",
+  "sslmode": "require"
+}
+```
+
+## 11) SLO + Alerting Endpoint (Step 25)
 
 Internal monitoring endpoint:
 

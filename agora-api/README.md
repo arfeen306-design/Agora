@@ -29,7 +29,7 @@ API base:
 
 ## Backend Status
 
-Core backend roadmap through Step 25 is now implemented in this repo.
+Core backend roadmap through Step 27 is now implemented in this repo.
 
 ## Step 5 Auth (Implemented)
 
@@ -535,3 +535,28 @@ New env keys:
 - `ALERT_WORKER_OLDEST_QUEUED_MINUTES_CRITICAL`
 - `ALERT_WORKER_FAILED_PENDING_WARNING`
 - `ALERT_WORKER_FAILED_PENDING_CRITICAL`
+
+## Step 27 Secrets Manager Runtime Wiring (Implemented)
+
+Runtime DB secrets support:
+
+- `DB_CREDENTIALS_SECRET_JSON` (preferred)
+- `DB_CREDENTIALS_SECRET_BASE64` (optional fallback)
+
+If provided, the API parses the secret object and overrides:
+
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_SSL` (via `ssl` or `sslmode` in secret)
+
+Accepted secret keys:
+
+- `host`
+- `port`
+- `dbname` or `database`
+- `username` or `user`
+- `password`
+- optional: `ssl`, `sslmode`, `url`

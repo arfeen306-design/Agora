@@ -15,6 +15,113 @@ function asCsv(value) {
     .filter(Boolean);
 }
 
+function parsePgSslMode(value) {
+  if (!value) return undefined;
+  const normalized = String(value).toLowerCase();
+  return ["require", "verify-ca", "verify-full"].includes(normalized);
+}
+
+function decodeMaybeBase64(value, fieldName) {
+  try {
+    return Buffer.from(value, "base64").toString("utf8");
+  } catch {
+    throw new Error(`${fieldName} must be valid base64`);
+  }
+}
+
+function parseSecretJson(raw, fieldName) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("must be a JSON object");
+    }
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "invalid JSON";
+    throw new Error(`${fieldName} is invalid: ${message}`);
+  }
+}
+
+function parseDbSecretFromUrl(urlString, fieldName) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(urlString);
+  } catch {
+    throw new Error(`${fieldName} url must be a valid URL`);
+  }
+
+  if (!["postgres:", "postgresql:"].includes(parsedUrl.protocol)) {
+    throw new Error(`${fieldName} url must use postgres:// or postgresql://`);
+  }
+
+  const dbName = parsedUrl.pathname.replace(/^\/+/, "");
+  return {
+    host: parsedUrl.hostname || undefined,
+    port: parsedUrl.port ? Number(parsedUrl.port) : undefined,
+    database: dbName || undefined,
+    user: parsedUrl.username ? decodeURIComponent(parsedUrl.username) : undefined,
+    password: parsedUrl.password ? decodeURIComponent(parsedUrl.password) : undefined,
+    ssl: parsePgSslMode(parsedUrl.searchParams.get("sslmode")),
+  };
+}
+
+function normalizeDbSecret(secret, fieldName) {
+  const secretUrl = typeof secret.url === "string" && secret.url.trim() ? secret.url.trim() : "";
+  const fromUrl = secretUrl ? parseDbSecretFromUrl(secretUrl, fieldName) : {};
+
+  const host = secret.host || fromUrl.host;
+  const database = secret.dbname || secret.database || fromUrl.database;
+  const user = secret.username || secret.user || fromUrl.user;
+  const password = secret.password || fromUrl.password;
+
+  const rawPort = secret.port ?? fromUrl.port;
+  const port = rawPort === undefined || rawPort === null || rawPort === ""
+    ? undefined
+    : Number(rawPort);
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+    throw new Error(`${fieldName} contains invalid port`);
+  }
+
+  let ssl;
+  if (Object.prototype.hasOwnProperty.call(secret, "ssl")) {
+    ssl = typeof secret.ssl === "boolean" ? secret.ssl : asBool(secret.ssl, false);
+  } else if (Object.prototype.hasOwnProperty.call(secret, "sslmode")) {
+    ssl = parsePgSslMode(secret.sslmode);
+  } else {
+    ssl = fromUrl.ssl;
+  }
+
+  if (!host || !database || !user || !password) {
+    throw new Error(`${fieldName} must include host, dbname/database, username/user, and password`);
+  }
+
+  return {
+    host,
+    port,
+    database,
+    user,
+    password,
+    ssl,
+  };
+}
+
+function loadDbSecretOverrides() {
+  const secretJson = process.env.DB_CREDENTIALS_SECRET_JSON;
+  const secretB64 = process.env.DB_CREDENTIALS_SECRET_BASE64;
+
+  if (!secretJson && !secretB64) return null;
+
+  const fieldName = secretJson ? "DB_CREDENTIALS_SECRET_JSON" : "DB_CREDENTIALS_SECRET_BASE64";
+  const raw = secretJson || decodeMaybeBase64(secretB64, fieldName);
+  const parsed = parseSecretJson(raw, fieldName);
+  return {
+    ...normalizeDbSecret(parsed, fieldName),
+    source: fieldName,
+  };
+}
+
+const dbSecretOverrides = loadDbSecretOverrides();
+
 const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 8080),
@@ -22,12 +129,13 @@ const config = {
     allowedOrigins: asCsv(process.env.CORS_ALLOWED_ORIGINS),
   },
   db: {
-    host: process.env.DB_HOST || "127.0.0.1",
-    port: Number(process.env.DB_PORT || 5432),
-    database: process.env.DB_NAME || "agora",
-    user: process.env.DB_USER || "agora_user",
-    password: process.env.DB_PASSWORD || "",
-    ssl: asBool(process.env.DB_SSL, false),
+    host: dbSecretOverrides?.host || process.env.DB_HOST || "127.0.0.1",
+    port: dbSecretOverrides?.port ?? Number(process.env.DB_PORT || 5432),
+    database: dbSecretOverrides?.database || process.env.DB_NAME || "agora",
+    user: dbSecretOverrides?.user || process.env.DB_USER || "agora_user",
+    password: dbSecretOverrides?.password || process.env.DB_PASSWORD || "",
+    ssl: dbSecretOverrides?.ssl ?? asBool(process.env.DB_SSL, false),
+    secretSource: dbSecretOverrides?.source || "",
   },
   jwt: {
     accessSecret: process.env.JWT_ACCESS_SECRET || "dev-access-secret",

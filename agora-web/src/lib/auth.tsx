@@ -30,6 +30,17 @@ const AuthContext = createContext<AuthContextType>({
   refreshUser: async () => {},
 });
 
+function parseCachedUser(raw: string): User | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (!Array.isArray((parsed as User).roles)) return null;
+    return parsed as User;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,24 +55,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const cachedUser = localStorage.getItem("agora_user");
       if (cachedUser) {
-        setUser(JSON.parse(cachedUser));
-        setLoading(false);
-        // Also validate with server in background
-        getMe()
-          .then((u) => {
-            setUser(u);
-            localStorage.setItem("agora_user", JSON.stringify(u));
-          })
-          .catch(() => {
-            clearTokens();
-            setUser(null);
-          });
+        const parsedUser = parseCachedUser(cachedUser);
+        if (parsedUser) {
+          setUser(parsedUser);
+          setLoading(false);
+          // Also validate with server in background
+          getMe()
+            .then((u) => {
+              setUser(u);
+              localStorage.setItem("agora_user", JSON.stringify(u));
+            })
+            .catch(() => {
+              clearTokens();
+              setUser(null);
+            });
+          return;
+        }
+
+        // Drop invalid/stale local cache and fetch from server
+        localStorage.removeItem("agora_user");
       } else {
-        const u = await getMe();
-        setUser(u);
-        localStorage.setItem("agora_user", JSON.stringify(u));
-        setLoading(false);
+        // continue to server fetch branch
       }
+
+      const u = await getMe();
+      setUser(u);
+      localStorage.setItem("agora_user", JSON.stringify(u));
+      setLoading(false);
     } catch {
       clearTokens();
       setUser(null);

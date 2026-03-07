@@ -138,8 +138,33 @@
   - `src/utils/observability.js` (SLO math)
   - `src/routes/observability.js` (new endpoint + alert evaluation)
   - `src/config.js` and env templates for SLO/threshold settings
-  - OpenAPI schema/paths
-  - API tests for internal SLO endpoint
+- OpenAPI schema/paths
+- API tests for internal SLO endpoint
+
+### UUID UX Fix (Step 26)
+- Added backend lookup routes:
+  - `GET /api/v1/lookups/classrooms`
+  - `GET /api/v1/lookups/students`
+  - `GET /api/v1/lookups/subjects`
+- Mounted lookups router in `routes/index.js`
+- Web forms now use dropdown selectors instead of raw UUID typing:
+  - Attendance
+  - Homework
+  - Marks
+  - Fees
+- Added lookup helpers in web API client (`agora-web/src/lib/api.ts`)
+
+### Secrets Runtime Wiring (Step 27)
+- API config now supports DB secret injection from runtime:
+  - `DB_CREDENTIALS_SECRET_JSON`
+  - `DB_CREDENTIALS_SECRET_BASE64`
+- Secret payload keys supported:
+  - `host`, `port`, `dbname|database`, `username|user`, `password`, optional `ssl|sslmode|url`
+- When secret env is set, DB connection config auto-overrides manual `DB_*` values
+- Deployment + infra docs updated:
+  - `DEPLOYMENT.md`
+  - `infra/terraform/aws/README.md`
+  - env examples and README status updated
 
 ## What Claude Code Has Built (DO NOT DUPLICATE)
 
