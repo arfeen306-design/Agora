@@ -5,8 +5,10 @@ const pool = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
+const { fireAndForgetAuditLog } = require("../utils/audit-log");
 const { success } = require("../utils/http");
 const { buildCsvBuffer, buildPdfBuffer, getReportFileName } = require("../utils/report-export");
+const { listTeacherClassroomIds } = require("../utils/teacher-scope");
 
 const router = express.Router();
 
@@ -67,19 +69,70 @@ function hasRole(auth, role) {
   return Array.isArray(auth?.roles) && auth.roles.includes(role);
 }
 
-function ensureReportReadRole(auth) {
+function ensureAcademicReportReadRole(auth) {
   if (
     hasRole(auth, "school_admin") ||
+    hasRole(auth, "principal") ||
+    hasRole(auth, "vice_principal") ||
+    hasRole(auth, "headmistress") ||
     hasRole(auth, "teacher") ||
     hasRole(auth, "parent") ||
     hasRole(auth, "student")
   ) {
     return;
   }
-  throw new AppError(403, "FORBIDDEN", "No report access for this role");
+  throw new AppError(403, "FORBIDDEN", "No academic report access for this role");
 }
 
-function appendStudentRoleScopeClause({
+function ensureFeesReportReadRole(auth) {
+  if (
+    hasRole(auth, "school_admin") ||
+    hasRole(auth, "principal") ||
+    hasRole(auth, "accountant")
+  ) {
+    return;
+  }
+  throw new AppError(403, "FORBIDDEN", "No fees report access for this role");
+}
+
+function ensureAcademicReportExportRole(auth) {
+  if (
+    hasRole(auth, "school_admin") ||
+    hasRole(auth, "principal") ||
+    hasRole(auth, "vice_principal") ||
+    hasRole(auth, "headmistress") ||
+    hasRole(auth, "teacher") ||
+    hasRole(auth, "parent") ||
+    hasRole(auth, "student")
+  ) {
+    return;
+  }
+  throw new AppError(403, "FORBIDDEN", "No academic report export access for this role");
+}
+
+function ensureFeesReportExportRole(auth) {
+  if (hasRole(auth, "school_admin") || hasRole(auth, "accountant") || hasRole(auth, "principal")) {
+    return;
+  }
+  throw new AppError(403, "FORBIDDEN", "No fees export access for this role");
+}
+
+function auditReportExport({ auth, actorUserId, reportType, format, rowCount, filters }) {
+  fireAndForgetAuditLog({
+    schoolId: auth.schoolId,
+    actorUserId,
+    action: "reports.data.exported",
+    entityName: "reports",
+    metadata: {
+      report_type: reportType,
+      format,
+      row_count: rowCount,
+      filters,
+    },
+  });
+}
+
+async function appendStudentRoleScopeClause({
   auth,
   where,
   params,
@@ -90,8 +143,52 @@ function appendStudentRoleScopeClause({
     return;
   }
 
-  if (hasRole(auth, "teacher")) {
+  if (hasRole(auth, "principal") || hasRole(auth, "vice_principal") || hasRole(auth, "accountant")) {
+    return;
+  }
+
+  if (hasRole(auth, "headmistress")) {
     params.push(auth.userId);
+    where.push(`
+      EXISTS (
+        SELECT 1
+        FROM student_enrollments se
+        JOIN classrooms c ON c.id = se.classroom_id
+        WHERE se.school_id = ${schoolColumn}
+          AND se.student_id = ${studentColumn}
+          AND se.status = 'active'
+          AND c.school_id = se.school_id
+          AND c.section_id IN (
+            SELECT ss.id
+            FROM school_sections ss
+            WHERE ss.school_id = se.school_id
+              AND (
+                ss.head_user_id = $${params.length}
+                OR ss.coordinator_user_id = $${params.length}
+                OR EXISTS (
+                  SELECT 1
+                  FROM staff_profiles sp
+                  WHERE sp.school_id = ss.school_id
+                    AND sp.user_id = $${params.length}
+                    AND sp.primary_section_id = ss.id
+                )
+              )
+          )
+      )
+    `);
+    return;
+  }
+
+  if (hasRole(auth, "teacher")) {
+    const teacherClassroomIds = await listTeacherClassroomIds({
+      schoolId: auth.schoolId,
+      userId: auth.userId,
+    });
+    if (teacherClassroomIds.length === 0) {
+      where.push("1 = 0");
+      return;
+    }
+    params.push(teacherClassroomIds);
     where.push(`
       EXISTS (
         SELECT 1
@@ -99,26 +196,7 @@ function appendStudentRoleScopeClause({
         WHERE se.school_id = ${schoolColumn}
           AND se.student_id = ${studentColumn}
           AND se.status = 'active'
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM classroom_subjects cs
-              JOIN teachers t ON t.id = cs.teacher_id
-              WHERE cs.school_id = se.school_id
-                AND cs.classroom_id = se.classroom_id
-                AND t.school_id = se.school_id
-                AND t.user_id = $${params.length}
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM classrooms c
-              JOIN teachers t2 ON t2.id = c.homeroom_teacher_id
-              WHERE c.school_id = se.school_id
-                AND c.id = se.classroom_id
-                AND t2.school_id = se.school_id
-                AND t2.user_id = $${params.length}
-            )
-          )
+          AND se.classroom_id = ANY($${params.length}::uuid[])
       )
     `);
     return;
@@ -187,7 +265,7 @@ async function sendExportFile({
   return res.status(200).send(buffer);
 }
 
-function buildAttendanceFilters(auth, query) {
+async function buildAttendanceFilters(auth, query) {
   const params = [auth.schoolId];
   const where = ["ar.school_id = $1"];
 
@@ -208,7 +286,7 @@ function buildAttendanceFilters(auth, query) {
     where.push(`ar.attendance_date <= $${params.length}`);
   }
 
-  appendStudentRoleScopeClause({
+  await appendStudentRoleScopeClause({
     auth,
     where,
     params,
@@ -219,7 +297,7 @@ function buildAttendanceFilters(auth, query) {
   return { params, whereClause: where.join(" AND ") };
 }
 
-function buildHomeworkFilters(auth, query) {
+async function buildHomeworkFilters(auth, query) {
   const params = [auth.schoolId];
   const where = ["h.school_id = $1", "se.school_id = h.school_id", "se.classroom_id = h.classroom_id", "se.status = 'active'"];
 
@@ -244,7 +322,7 @@ function buildHomeworkFilters(auth, query) {
     where.push(`h.due_at::date <= $${params.length}`);
   }
 
-  appendStudentRoleScopeClause({
+  await appendStudentRoleScopeClause({
     auth,
     where,
     params,
@@ -255,7 +333,7 @@ function buildHomeworkFilters(auth, query) {
   return { params, whereClause: where.join(" AND ") };
 }
 
-function buildMarksFilters(auth, query) {
+async function buildMarksFilters(auth, query) {
   const params = [auth.schoolId];
   const where = ["a.school_id = $1", "sc.school_id = a.school_id", "sc.assessment_id = a.id"];
 
@@ -284,7 +362,7 @@ function buildMarksFilters(auth, query) {
     where.push(`a.assessment_date <= $${params.length}`);
   }
 
-  appendStudentRoleScopeClause({
+  await appendStudentRoleScopeClause({
     auth,
     where,
     params,
@@ -295,7 +373,7 @@ function buildMarksFilters(auth, query) {
   return { params, whereClause: where.join(" AND ") };
 }
 
-function buildFeesFilters(auth, query) {
+async function buildFeesFilters(auth, query) {
   const params = [auth.schoolId];
   const where = ["fi.school_id = $1"];
 
@@ -316,7 +394,7 @@ function buildFeesFilters(auth, query) {
     where.push(`fi.status = $${params.length}::invoice_status`);
   }
 
-  appendStudentRoleScopeClause({
+  await appendStudentRoleScopeClause({
     auth,
     where,
     params,
@@ -331,9 +409,9 @@ router.get(
   "/reports/attendance/summary",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureAcademicReportReadRole(req.auth);
     const query = parseSchema(commonFilterSchema, req.query, "Invalid attendance summary query");
-    const filters = buildAttendanceFilters(req.auth, query);
+    const filters = await buildAttendanceFilters(req.auth, query);
 
     const summaryResult = await pool.query(
       `
@@ -369,9 +447,9 @@ router.get(
   "/reports/homework/summary",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureAcademicReportReadRole(req.auth);
     const query = parseSchema(commonFilterSchema, req.query, "Invalid homework summary query");
-    const filters = buildHomeworkFilters(req.auth, query);
+    const filters = await buildHomeworkFilters(req.auth, query);
 
     const summaryResult = await pool.query(
       `
@@ -432,9 +510,9 @@ router.get(
   "/reports/marks/summary",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureAcademicReportReadRole(req.auth);
     const query = parseSchema(marksFilterSchema, req.query, "Invalid marks summary query");
-    const filters = buildMarksFilters(req.auth, query);
+    const filters = await buildMarksFilters(req.auth, query);
 
     const summaryResult = await pool.query(
       `
@@ -472,9 +550,9 @@ router.get(
   "/reports/fees/summary",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureFeesReportReadRole(req.auth);
     const query = parseSchema(feesFilterSchema, req.query, "Invalid fees summary query");
-    const filters = buildFeesFilters(req.auth, query);
+    const filters = await buildFeesFilters(req.auth, query);
 
     const summaryResult = await pool.query(
       `
@@ -537,9 +615,9 @@ router.get(
   "/reports/attendance/export",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureAcademicReportExportRole(req.auth);
     const query = parseSchema(commonExportFilterSchema, req.query, "Invalid attendance export query");
-    const filters = buildAttendanceFilters(req.auth, query);
+    const filters = await buildAttendanceFilters(req.auth, query);
     const params = [...filters.params, query.max_rows];
 
     const rowsResult = await pool.query(
@@ -560,6 +638,20 @@ router.get(
       `,
       params
     );
+
+    auditReportExport({
+      auth: req.auth,
+      actorUserId: req.auth.userId,
+      reportType: "attendance",
+      format: query.format,
+      rowCount: rowsResult.rows.length,
+      filters: {
+        student_id: query.student_id || null,
+        classroom_id: query.classroom_id || null,
+        date_from: query.date_from || null,
+        date_to: query.date_to || null,
+      },
+    });
 
     await sendExportFile({
       res,
@@ -586,9 +678,9 @@ router.get(
   "/reports/homework/export",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureAcademicReportExportRole(req.auth);
     const query = parseSchema(commonExportFilterSchema, req.query, "Invalid homework export query");
-    const filters = buildHomeworkFilters(req.auth, query);
+    const filters = await buildHomeworkFilters(req.auth, query);
     const params = [...filters.params, query.max_rows];
 
     const rowsResult = await pool.query(
@@ -620,6 +712,21 @@ router.get(
       params
     );
 
+    auditReportExport({
+      auth: req.auth,
+      actorUserId: req.auth.userId,
+      reportType: "homework",
+      format: query.format,
+      rowCount: rowsResult.rows.length,
+      filters: {
+        student_id: query.student_id || null,
+        classroom_id: query.classroom_id || null,
+        subject_id: query.subject_id || null,
+        date_from: query.date_from || null,
+        date_to: query.date_to || null,
+      },
+    });
+
     await sendExportFile({
       res,
       reportKey: "homework",
@@ -647,9 +754,9 @@ router.get(
   "/reports/marks/export",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureAcademicReportExportRole(req.auth);
     const query = parseSchema(marksExportFilterSchema, req.query, "Invalid marks export query");
-    const filters = buildMarksFilters(req.auth, query);
+    const filters = await buildMarksFilters(req.auth, query);
     const params = [...filters.params, query.max_rows];
 
     const rowsResult = await pool.query(
@@ -680,6 +787,22 @@ router.get(
       params
     );
 
+    auditReportExport({
+      auth: req.auth,
+      actorUserId: req.auth.userId,
+      reportType: "marks",
+      format: query.format,
+      rowCount: rowsResult.rows.length,
+      filters: {
+        student_id: query.student_id || null,
+        classroom_id: query.classroom_id || null,
+        subject_id: query.subject_id || null,
+        assessment_type: query.assessment_type || null,
+        date_from: query.date_from || null,
+        date_to: query.date_to || null,
+      },
+    });
+
     await sendExportFile({
       res,
       reportKey: "marks",
@@ -708,9 +831,9 @@ router.get(
   "/reports/fees/export",
   requireAuth,
   asyncHandler(async (req, res) => {
-    ensureReportReadRole(req.auth);
+    ensureFeesReportExportRole(req.auth);
     const query = parseSchema(feesExportFilterSchema, req.query, "Invalid fees export query");
-    const filters = buildFeesFilters(req.auth, query);
+    const filters = await buildFeesFilters(req.auth, query);
     const params = [...filters.params, query.max_rows];
 
     const rowsResult = await pool.query(
@@ -732,6 +855,20 @@ router.get(
       `,
       params
     );
+
+    auditReportExport({
+      auth: req.auth,
+      actorUserId: req.auth.userId,
+      reportType: "fees",
+      format: query.format,
+      rowCount: rowsResult.rows.length,
+      filters: {
+        student_id: query.student_id || null,
+        status: query.status || null,
+        date_from: query.date_from || null,
+        date_to: query.date_to || null,
+      },
+    });
 
     await sendExportFile({
       res,

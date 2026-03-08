@@ -6,6 +6,11 @@ const { requireAuth, requireRoles } = require("../middleware/auth");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
 const { success } = require("../utils/http");
+const {
+  getTeacherIdentityByUser,
+  listTeacherClassroomIds,
+  ensureTeacherCanManageClassroom: ensureTeacherClassroomScope,
+} = require("../utils/teacher-scope");
 
 const router = express.Router();
 
@@ -115,58 +120,17 @@ async function subjectExists(schoolId, subjectId) {
   return Boolean(result.rows[0]);
 }
 
-async function teacherCanManageClassroom({ schoolId, userId, classroomId }) {
-  const result = await pool.query(
-    `
-      SELECT EXISTS(
-        SELECT 1
-        FROM teachers t
-        WHERE t.school_id = $1
-          AND t.user_id = $2
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM classroom_subjects cs
-              WHERE cs.school_id = $1
-                AND cs.classroom_id = $3
-                AND cs.teacher_id = t.id
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM classrooms c
-              WHERE c.school_id = $1
-                AND c.id = $3
-                AND c.homeroom_teacher_id = t.id
-            )
-          )
-      ) AS allowed
-    `,
-    [schoolId, userId, classroomId]
-  );
-  return Boolean(result.rows[0]?.allowed);
-}
-
 async function ensureTeacherCanManageClassroom({ auth, classroomId }) {
   if (hasRole(auth, "school_admin")) return;
   if (!hasRole(auth, "teacher")) {
     throw new AppError(403, "FORBIDDEN", "Only teacher/admin can manage homework");
   }
-  const allowed = await teacherCanManageClassroom({
+  await ensureTeacherClassroomScope({
     schoolId: auth.schoolId,
     userId: auth.userId,
     classroomId,
+    message: "Teacher is not assigned to this classroom",
   });
-  if (!allowed) {
-    throw new AppError(403, "FORBIDDEN", "Teacher is not assigned to this classroom");
-  }
-}
-
-async function getTeacherIdByUser({ schoolId, userId }) {
-  const result = await pool.query(
-    "SELECT id FROM teachers WHERE school_id = $1 AND user_id = $2 LIMIT 1",
-    [schoolId, userId]
-  );
-  return result.rows[0]?.id || null;
 }
 
 async function getHomeworkById({ homeworkId, schoolId }) {
@@ -287,29 +251,16 @@ router.get(
         where.push(`h.is_published = $${params.length}`);
       }
     } else if (hasRole(req.auth, "teacher")) {
-      params.push(req.auth.userId);
-      where.push(`
-        (
-          EXISTS (
-            SELECT 1
-            FROM classroom_subjects cs
-            JOIN teachers t ON t.id = cs.teacher_id
-            WHERE cs.school_id = h.school_id
-              AND cs.classroom_id = h.classroom_id
-              AND t.school_id = h.school_id
-              AND t.user_id = $${params.length}
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM classrooms c
-            JOIN teachers t2 ON t2.id = c.homeroom_teacher_id
-            WHERE c.school_id = h.school_id
-              AND c.id = h.classroom_id
-              AND t2.school_id = h.school_id
-              AND t2.user_id = $${params.length}
-          )
-        )
-      `);
+      const teacherClassroomIds = await listTeacherClassroomIds({
+        schoolId: req.auth.schoolId,
+        userId: req.auth.userId,
+      });
+      if (teacherClassroomIds.length === 0) {
+        where.push("1 = 0");
+      } else {
+        params.push(teacherClassroomIds);
+        where.push(`h.classroom_id = ANY($${params.length}::uuid[])`);
+      }
       if (Object.prototype.hasOwnProperty.call(query, "published")) {
         params.push(query.published);
         where.push(`h.is_published = $${params.length}`);
@@ -438,10 +389,11 @@ router.post(
 
     let teacherId = null;
     if (hasRole(req.auth, "teacher")) {
-      teacherId = await getTeacherIdByUser({
+      const teacherIdentity = await getTeacherIdentityByUser({
         schoolId: req.auth.schoolId,
         userId: req.auth.userId,
       });
+      teacherId = teacherIdentity.teacherId;
       if (!teacherId) {
         throw new AppError(403, "FORBIDDEN", "Teacher profile is missing");
       }

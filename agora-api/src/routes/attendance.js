@@ -11,6 +11,10 @@ const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
 const { fireAndForgetAuditLog } = require("../utils/audit-log");
 const { success } = require("../utils/http");
+const {
+  listTeacherClassroomIds,
+  ensureTeacherCanManageClassroom: ensureTeacherClassroomScope,
+} = require("../utils/teacher-scope");
 
 const router = express.Router();
 
@@ -102,6 +106,16 @@ function parseSchema(schema, input, message = "Invalid request input") {
   return parsed.data;
 }
 
+function assertDateRange({ dateFrom, dateTo, fromField = "date_from", toField = "date_to" }) {
+  if (!dateFrom || !dateTo) return;
+  if (dateFrom > dateTo) {
+    throw new AppError(422, "VALIDATION_ERROR", `${fromField} must be on or before ${toField}`, [
+      { field: fromField, issue: "invalid_range" },
+      { field: toField, issue: "invalid_range" },
+    ]);
+  }
+}
+
 function hasRole(auth, role) {
   return Array.isArray(auth?.roles) && auth.roles.includes(role);
 }
@@ -142,51 +156,17 @@ async function classroomExists(schoolId, classroomId) {
   return Boolean(result.rows[0]);
 }
 
-async function teacherCanManageClassroom({ schoolId, userId, classroomId }) {
-  const result = await pool.query(
-    `
-      SELECT EXISTS(
-        SELECT 1
-        FROM teachers t
-        WHERE t.school_id = $1
-          AND t.user_id = $2
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM classroom_subjects cs
-              WHERE cs.school_id = $1
-                AND cs.classroom_id = $3
-                AND cs.teacher_id = t.id
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM classrooms c
-              WHERE c.school_id = $1
-                AND c.id = $3
-                AND c.homeroom_teacher_id = t.id
-            )
-          )
-      ) AS allowed
-    `,
-    [schoolId, userId, classroomId]
-  );
-
-  return Boolean(result.rows[0]?.allowed);
-}
-
 async function ensureTeacherCanManageClassroom({ auth, classroomId }) {
   if (hasRole(auth, "school_admin")) return;
   if (!hasRole(auth, "teacher")) {
     throw new AppError(403, "FORBIDDEN", "Only teacher/admin can modify attendance");
   }
-  const allowed = await teacherCanManageClassroom({
+  await ensureTeacherClassroomScope({
     schoolId: auth.schoolId,
     userId: auth.userId,
     classroomId,
+    message: "Teacher is not assigned to this classroom",
   });
-  if (!allowed) {
-    throw new AppError(403, "FORBIDDEN", "Teacher is not assigned to this classroom");
-  }
 }
 
 async function getSchoolByCode(schoolCode) {
@@ -395,6 +375,7 @@ router.get(
   asyncHandler(async (req, res) => {
     ensureReadRole(req.auth);
     const query = parseSchema(listQuerySchema, req.query, "Invalid attendance query");
+    assertDateRange({ dateFrom: query.date_from, dateTo: query.date_to });
 
     const params = [req.auth.schoolId];
     const where = ["ar.school_id = $1"];
@@ -423,29 +404,16 @@ router.get(
     if (hasRole(req.auth, "school_admin")) {
       // full school scope
     } else if (hasRole(req.auth, "teacher")) {
-      params.push(req.auth.userId);
-      where.push(`
-        (
-          EXISTS (
-            SELECT 1
-            FROM classroom_subjects cs
-            JOIN teachers t ON t.id = cs.teacher_id
-            WHERE cs.school_id = ar.school_id
-              AND cs.classroom_id = ar.classroom_id
-              AND t.school_id = ar.school_id
-              AND t.user_id = $${params.length}
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM classrooms c
-            JOIN teachers t2 ON t2.id = c.homeroom_teacher_id
-            WHERE c.school_id = ar.school_id
-              AND c.id = ar.classroom_id
-              AND t2.school_id = ar.school_id
-              AND t2.user_id = $${params.length}
-          )
-        )
-      `);
+      const teacherClassroomIds = await listTeacherClassroomIds({
+        schoolId: req.auth.schoolId,
+        userId: req.auth.userId,
+      });
+      if (teacherClassroomIds.length === 0) {
+        where.push("1 = 0");
+      } else {
+        params.push(teacherClassroomIds);
+        where.push(`ar.classroom_id = ANY($${params.length}::uuid[])`);
+      }
     } else if (hasRole(req.auth, "parent")) {
       params.push(req.auth.userId);
       where.push(`
@@ -548,6 +516,35 @@ router.post(
     );
     if (studentsResult.rowCount !== studentIds.length) {
       throw new AppError(422, "VALIDATION_ERROR", "One or more students do not belong to this school");
+    }
+
+    const enrollmentResult = await pool.query(
+      `
+        SELECT se.student_id
+        FROM student_enrollments se
+        JOIN academic_years ay
+          ON ay.id = se.academic_year_id
+         AND ay.school_id = se.school_id
+        WHERE se.school_id = $1
+          AND se.classroom_id = $2
+          AND se.status = 'active'
+          AND ay.is_current = TRUE
+          AND se.student_id = ANY($3::uuid[])
+      `,
+      [req.auth.schoolId, body.classroom_id, studentIds]
+    );
+    const enrolledIds = new Set(enrollmentResult.rows.map((row) => row.student_id));
+    const notEnrolledIds = studentIds.filter((studentId) => !enrolledIds.has(studentId));
+    if (notEnrolledIds.length > 0) {
+      throw new AppError(
+        422,
+        "VALIDATION_ERROR",
+        "One or more students are not actively enrolled in this classroom for the current academic year",
+        notEnrolledIds.slice(0, 15).map((studentId) => ({
+          field: "entries.student_id",
+          issue: `not_enrolled:${studentId}`,
+        }))
+      );
     }
 
     const client = await pool.connect();

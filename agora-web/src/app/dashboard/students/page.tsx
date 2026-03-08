@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
@@ -21,7 +22,13 @@ type SortColumn = "attendance_date" | "status";
 const STORAGE_KEY = "agora_web_students_state_v1";
 
 export default function StudentsPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
+  const roles = user?.roles || [];
+  const canViewStudents =
+    isAdmin ||
+    ["principal", "vice_principal", "headmistress", "teacher", "front_desk", "hr_admin"].some((role) =>
+      roles.includes(role)
+    );
 
   const [students, setStudents] = useState<LookupStudent[]>([]);
   const [studentSearchInput, setStudentSearchInput] = useState("");
@@ -202,13 +209,13 @@ export default function StudentsPage() {
     });
   }, [attendanceRecords, recordSearch, sortBy, sortDir]);
 
-  if (!isAdmin) {
+  if (!canViewStudents) {
     return (
       <>
         <Header title="Students" />
         <div className="p-6">
           <div className="card py-12 text-center">
-            <p className="text-gray-500">Only school admins can access student management.</p>
+            <p className="text-gray-500">Your role cannot access student records.</p>
           </div>
         </div>
       </>
@@ -260,6 +267,11 @@ export default function StudentsPage() {
               <button className="btn-primary w-full" onClick={searchStudent} disabled={loading || !selectedStudentId}>
                 {loading ? "Searching..." : "Search"}
               </button>
+              {selectedStudentId && (
+                <Link className="btn-secondary whitespace-nowrap" href={`/dashboard/students/${selectedStudentId}/profile`}>
+                  Open Profile
+                </Link>
+              )}
               <button
                 className="btn-secondary"
                 onClick={() => {

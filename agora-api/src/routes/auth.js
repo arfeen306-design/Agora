@@ -10,6 +10,7 @@ const { requireAuth } = require("../middleware/auth");
 const { createRateLimiter } = require("../middleware/rate-limit");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
+const { fireAndForgetAuditLog } = require("../utils/audit-log");
 const { sha256 } = require("../utils/crypto");
 const { success } = require("../utils/http");
 const {
@@ -84,6 +85,20 @@ async function getUserByLogin(schoolCode, email) {
       LIMIT 1
     `,
     [schoolCode, email]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getSchoolByCode(schoolCode) {
+  const result = await pool.query(
+    `
+      SELECT id
+      FROM schools
+      WHERE code = $1
+      LIMIT 1
+    `,
+    [schoolCode]
   );
 
   return result.rows[0] || null;
@@ -178,11 +193,40 @@ router.post(
     const user = await getUserByLogin(input.school_code, input.email);
 
     if (!user || !user.user_active || !user.school_active) {
+      const school = user ? { id: user.school_id } : await getSchoolByCode(input.school_code);
+      if (school?.id) {
+        fireAndForgetAuditLog({
+          schoolId: school.id,
+          actorUserId: user?.id || null,
+          action: "auth.session.login_failed",
+          entityName: "user_sessions",
+          metadata: {
+            school_code: input.school_code,
+            email: input.email,
+            reason: "invalid_credentials",
+            ip_address: req.ip,
+            user_agent: req.header("User-Agent") || null,
+          },
+        });
+      }
       throw new AppError(401, "UNAUTHORIZED", "Invalid credentials");
     }
 
     const passwordOk = await verifyPassword(input.password, user.password_hash);
     if (!passwordOk) {
+      fireAndForgetAuditLog({
+        schoolId: user.school_id,
+        actorUserId: user.id,
+        action: "auth.session.login_failed",
+        entityName: "user_sessions",
+        metadata: {
+          school_code: input.school_code,
+          email: input.email,
+          reason: "invalid_credentials",
+          ip_address: req.ip,
+          user_agent: req.header("User-Agent") || null,
+        },
+      });
       throw new AppError(401, "UNAUTHORIZED", "Invalid credentials");
     }
 
@@ -197,6 +241,19 @@ router.post(
       const tokenBundle = await createSessionAndTokens(client, user, roles);
       await client.query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]);
       await client.query("COMMIT");
+
+      fireAndForgetAuditLog({
+        schoolId: user.school_id,
+        actorUserId: user.id,
+        action: "auth.session.login",
+        entityName: "user_sessions",
+        metadata: {
+          email: input.email,
+          roles,
+          ip_address: req.ip,
+          user_agent: req.header("User-Agent") || null,
+        },
+      });
 
       success(
         res,
@@ -318,6 +375,19 @@ router.post(
         "UPDATE user_sessions SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
         [payload.sid]
       );
+
+      fireAndForgetAuditLog({
+        schoolId: payload.school_id,
+        actorUserId: payload.sub,
+        action: "auth.session.logout",
+        entityName: "user_sessions",
+        entityId: payload.sid,
+        metadata: {
+          session_id: payload.sid,
+          ip_address: req.ip,
+          user_agent: req.header("User-Agent") || null,
+        },
+      });
     }
 
     return success(res, { logged_out: true }, 200);

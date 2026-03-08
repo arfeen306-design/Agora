@@ -6,6 +6,10 @@ const { requireAuth, requireRoles } = require("../middleware/auth");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
 const { success } = require("../utils/http");
+const {
+  listTeacherClassroomIds,
+  ensureTeacherCanManageClassroom: ensureTeacherClassroomScope,
+} = require("../utils/teacher-scope");
 
 const router = express.Router();
 
@@ -82,6 +86,9 @@ function hasRole(auth, role) {
 function ensureMarksReadRole(auth) {
   if (
     hasRole(auth, "school_admin") ||
+    hasRole(auth, "principal") ||
+    hasRole(auth, "vice_principal") ||
+    hasRole(auth, "headmistress") ||
     hasRole(auth, "teacher") ||
     hasRole(auth, "parent") ||
     hasRole(auth, "student")
@@ -107,50 +114,17 @@ async function subjectExists(schoolId, subjectId) {
   return Boolean(result.rows[0]);
 }
 
-async function teacherCanManageClassroom({ schoolId, userId, classroomId }) {
-  const result = await pool.query(
-    `
-      SELECT EXISTS(
-        SELECT 1
-        FROM teachers t
-        WHERE t.school_id = $1
-          AND t.user_id = $2
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM classroom_subjects cs
-              WHERE cs.school_id = $1
-                AND cs.classroom_id = $3
-                AND cs.teacher_id = t.id
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM classrooms c
-              WHERE c.school_id = $1
-                AND c.id = $3
-                AND c.homeroom_teacher_id = t.id
-            )
-          )
-      ) AS allowed
-    `,
-    [schoolId, userId, classroomId]
-  );
-  return Boolean(result.rows[0]?.allowed);
-}
-
 async function ensureTeacherCanManageClassroom({ auth, classroomId }) {
   if (hasRole(auth, "school_admin")) return;
   if (!hasRole(auth, "teacher")) {
     throw new AppError(403, "FORBIDDEN", "Only teacher/admin can manage assessments");
   }
-  const allowed = await teacherCanManageClassroom({
+  await ensureTeacherClassroomScope({
     schoolId: auth.schoolId,
     userId: auth.userId,
     classroomId,
+    message: "Teacher is not assigned to this classroom",
   });
-  if (!allowed) {
-    throw new AppError(403, "FORBIDDEN", "Teacher is not assigned to this classroom");
-  }
 }
 
 async function getAssessmentById({ schoolId, assessmentId }) {
@@ -178,8 +152,54 @@ async function getAssessmentById({ schoolId, assessmentId }) {
 
 async function ensureStudentVisibleToRole({ auth, studentId }) {
   if (hasRole(auth, "school_admin")) return;
+  if (hasRole(auth, "principal") || hasRole(auth, "vice_principal")) return;
+
+  if (hasRole(auth, "headmistress")) {
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM student_enrollments se
+        JOIN classrooms c
+          ON c.id = se.classroom_id
+         AND c.school_id = se.school_id
+        WHERE se.school_id = $1
+          AND se.student_id = $2
+          AND se.status = 'active'
+          AND c.section_id IN (
+            SELECT ss.id
+            FROM school_sections ss
+            WHERE ss.school_id = se.school_id
+              AND (
+                ss.head_user_id = $3
+                OR ss.coordinator_user_id = $3
+                OR EXISTS (
+                  SELECT 1
+                  FROM staff_profiles sp
+                  WHERE sp.school_id = ss.school_id
+                    AND sp.user_id = $3
+                    AND sp.primary_section_id = ss.id
+                )
+              )
+          )
+        LIMIT 1
+      `,
+      [auth.schoolId, studentId, auth.userId]
+    );
+    if (!result.rows[0]) {
+      throw new AppError(403, "FORBIDDEN", "Headmistress cannot access this student's marks");
+    }
+    return;
+  }
 
   if (hasRole(auth, "teacher")) {
+    const teacherClassroomIds = await listTeacherClassroomIds({
+      schoolId: auth.schoolId,
+      userId: auth.userId,
+    });
+    if (teacherClassroomIds.length === 0) {
+      throw new AppError(403, "FORBIDDEN", "Teacher cannot access this student's marks");
+    }
+
     const result = await pool.query(
       `
         SELECT 1
@@ -187,29 +207,10 @@ async function ensureStudentVisibleToRole({ auth, studentId }) {
         WHERE se.school_id = $1
           AND se.student_id = $2
           AND se.status = 'active'
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM classroom_subjects cs
-              JOIN teachers t ON t.id = cs.teacher_id
-              WHERE cs.school_id = se.school_id
-                AND cs.classroom_id = se.classroom_id
-                AND t.school_id = se.school_id
-                AND t.user_id = $3
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM classrooms c
-              JOIN teachers t2 ON t2.id = c.homeroom_teacher_id
-              WHERE c.school_id = se.school_id
-                AND c.id = se.classroom_id
-                AND t2.school_id = se.school_id
-                AND t2.user_id = $3
-            )
-          )
+          AND se.classroom_id = ANY($3::uuid[])
         LIMIT 1
       `,
-      [auth.schoolId, studentId, auth.userId]
+      [auth.schoolId, studentId, teacherClassroomIds]
     );
     if (!result.rows[0]) {
       throw new AppError(403, "FORBIDDEN", "Teacher cannot access this student's marks");
@@ -290,32 +291,49 @@ router.get(
       where.push(`a.assessment_date <= $${params.length}`);
     }
 
-    if (hasRole(req.auth, "school_admin")) {
+    if (
+      hasRole(req.auth, "school_admin") ||
+      hasRole(req.auth, "principal") ||
+      hasRole(req.auth, "vice_principal")
+    ) {
       // full school scope
-    } else if (hasRole(req.auth, "teacher")) {
+    } else if (hasRole(req.auth, "headmistress")) {
       params.push(req.auth.userId);
       where.push(`
-        (
-          EXISTS (
-            SELECT 1
-            FROM classroom_subjects cs
-            JOIN teachers t ON t.id = cs.teacher_id
-            WHERE cs.school_id = a.school_id
-              AND cs.classroom_id = a.classroom_id
-              AND t.school_id = a.school_id
-              AND t.user_id = $${params.length}
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM classrooms c
-            JOIN teachers t2 ON t2.id = c.homeroom_teacher_id
-            WHERE c.school_id = a.school_id
-              AND c.id = a.classroom_id
-              AND t2.school_id = a.school_id
-              AND t2.user_id = $${params.length}
-          )
+        EXISTS (
+          SELECT 1
+          FROM classrooms c
+          WHERE c.school_id = a.school_id
+            AND c.id = a.classroom_id
+            AND c.section_id IN (
+              SELECT ss.id
+              FROM school_sections ss
+              WHERE ss.school_id = a.school_id
+                AND (
+                  ss.head_user_id = $${params.length}
+                  OR ss.coordinator_user_id = $${params.length}
+                  OR EXISTS (
+                    SELECT 1
+                    FROM staff_profiles sp
+                    WHERE sp.school_id = ss.school_id
+                      AND sp.user_id = $${params.length}
+                      AND sp.primary_section_id = ss.id
+                  )
+                )
+            )
         )
       `);
+    } else if (hasRole(req.auth, "teacher")) {
+      const teacherClassroomIds = await listTeacherClassroomIds({
+        schoolId: req.auth.schoolId,
+        userId: req.auth.userId,
+      });
+      if (teacherClassroomIds.length === 0) {
+        where.push("1 = 0");
+      } else {
+        params.push(teacherClassroomIds);
+        where.push(`a.classroom_id = ANY($${params.length}::uuid[])`);
+      }
     } else if (hasRole(req.auth, "parent")) {
       params.push(req.auth.userId);
       where.push(`

@@ -13,6 +13,13 @@ const eventsRouter = require("./events");
 const adminRouter = require("./admin");
 const observabilityRouter = require("./observability");
 const lookupsRouter = require("./lookups");
+const institutionRouter = require("./institution");
+const peopleRouter = require("./people");
+const rbacRouter = require("./rbac");
+const importsRouter = require("./imports");
+const admissionsRouter = require("./admissions");
+const timetableRouter = require("./timetable");
+const disciplineRouter = require("./discipline");
 
 const router = express.Router();
 
@@ -30,5 +37,12 @@ router.use("/events", eventsRouter);
 router.use("/admin", adminRouter);
 router.use(observabilityRouter);
 router.use(lookupsRouter);
+router.use(institutionRouter);
+router.use(peopleRouter);
+router.use(rbacRouter);
+router.use(importsRouter);
+router.use(admissionsRouter);
+router.use(timetableRouter);
+router.use(disciplineRouter);
 
 module.exports = router;

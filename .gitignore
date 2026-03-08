@@ -22,6 +22,9 @@ venv/
 **/.env
 **/.env.local
 **/.env.*.local
+**/.env.production
+**/.env.production.*
+**/.env*.bak
 
 # Flutter / mobile generated
 **/.dart_tool/

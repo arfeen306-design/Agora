@@ -145,6 +145,7 @@ export default function LoginPage() {
               <p><span className="font-medium">School:</span> agora_demo</p>
               <p><span className="font-medium">Admin:</span> admin@agora.com / admin123</p>
               <p><span className="font-medium">Teacher:</span> teacher1@agora.com / teach123</p>
+              <p><span className="font-medium">Front Desk:</span> frontdesk1@agora.com / front123</p>
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ const pool = require("../db");
 const { requireAuth, requireRoles } = require("../middleware/auth");
 const AppError = require("../utils/app-error");
 const asyncHandler = require("../utils/async-handler");
+const { fireAndForgetAuditLog } = require("../utils/audit-log");
 const { success } = require("../utils/http");
 const { buildCsvBuffer, buildPdfBuffer, getReportFileName } = require("../utils/report-export");
 
@@ -223,6 +224,25 @@ router.get(
     );
 
     const subtitle = `Rows: ${rowsResult.rows.length} | Generated: ${new Date().toISOString()}`;
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "security.audit.exported",
+      entityName: "audit_logs",
+      metadata: {
+        format: query.format,
+        row_count: rowsResult.rows.length,
+        filters: {
+          actor_user_id: query.actor_user_id || null,
+          action: query.action || null,
+          entity_name: query.entity_name || null,
+          date_from: query.date_from || null,
+          date_to: query.date_to || null,
+        },
+      },
+    });
+
     return sendAuditExport({
       res,
       rows: rowsResult.rows,

@@ -10,6 +10,7 @@ let server;
 let baseUrl;
 const deviceApiKey = process.env.ATTENDANCE_DEVICE_API_KEY || "dev-device-key";
 const internalApiKey = process.env.INTERNAL_API_KEY || "dev-internal-key";
+const SCHOOL_ID = "10000000-0000-0000-0000-000000000001";
 
 async function jsonRequest(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
@@ -44,6 +45,78 @@ async function login(email, password) {
   assert.equal(result.body?.success, true);
   assert.ok(result.body?.data?.access_token);
   return result.body.data.access_token;
+}
+
+async function loginBundle(email, password) {
+  const result = await jsonRequest("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      school_code: "agora_demo",
+      email,
+      password,
+    }),
+  });
+
+  assert.equal(result.status, 200, `Login failed for ${email}: ${JSON.stringify(result.body)}`);
+  assert.equal(result.body?.success, true);
+  assert.ok(result.body?.data?.access_token);
+  assert.ok(result.body?.data?.refresh_token);
+  return result.body.data;
+}
+
+async function getUserIdByEmail(email) {
+  const result = await pool.query(
+    `
+      SELECT id
+      FROM users
+      WHERE school_id = $1
+        AND LOWER(email) = LOWER($2)
+      LIMIT 1
+    `,
+    [SCHOOL_ID, email]
+  );
+  return result.rows[0]?.id || null;
+}
+
+async function waitForAuditAction(action, actorUserId, attempts = 20) {
+  for (let i = 0; i < attempts; i += 1) {
+    const row = await pool.query(
+      `
+        SELECT id
+        FROM audit_logs
+        WHERE school_id = $1
+          AND action = $2
+          AND actor_user_id = $3
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [SCHOOL_ID, action, actorUserId]
+    );
+    if (row.rows[0]) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+async function waitForFailedLoginAudit(email, attempts = 20) {
+  for (let i = 0; i < attempts; i += 1) {
+    const row = await pool.query(
+      `
+        SELECT id
+        FROM audit_logs
+        WHERE school_id = $1
+          AND action = 'auth.session.login_failed'
+          AND metadata->>'email' = $2
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [SCHOOL_ID, email]
+    );
+    if (row.rows[0]) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
 }
 
 test.before(async () => {
@@ -109,6 +182,102 @@ test("auth login + me works with teacher account", async () => {
   assert.ok(me.body.data.roles.includes("teacher"));
 });
 
+test("teacher projection is auto-healed for teacher-role users", async () => {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const email = `phase1.teacher.${suffix}@agora.com`;
+
+  const userInsert = await pool.query(
+    `
+      INSERT INTO users (
+        school_id,
+        email,
+        phone,
+        password_hash,
+        first_name,
+        last_name,
+        is_active
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+      RETURNING id
+    `,
+    [SCHOOL_ID, email, `+92000${suffix.replace(/[^0-9]/g, "").padEnd(6, "8")}`, "teach123", "Compat", "Teacher"]
+  );
+  const userId = userInsert.rows[0].id;
+
+  await pool.query(
+    `
+      INSERT INTO user_roles (user_id, role_id)
+      SELECT $1, r.id
+      FROM roles r
+      WHERE r.code = 'teacher'
+      ON CONFLICT DO NOTHING
+    `,
+    [userId]
+  );
+
+  await pool.query(
+    `
+      DELETE FROM teachers
+      WHERE school_id = $1
+        AND user_id = $2
+    `,
+    [SCHOOL_ID, userId]
+  );
+
+  const token = await login(email, "teach123");
+  const me = await jsonRequest("/api/v1/auth/me", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  assert.equal(me.status, 200, JSON.stringify(me.body));
+
+  const projection = await pool.query(
+    `
+      SELECT id, employee_code
+      FROM teachers
+      WHERE school_id = $1
+        AND user_id = $2
+      LIMIT 1
+    `,
+    [SCHOOL_ID, userId]
+  );
+  assert.ok(projection.rows[0], "Expected teacher projection row to be created at auth time");
+  assert.match(projection.rows[0].employee_code, /^TEA-/);
+});
+
+test("auth login/logout and failed login are explicitly audited", async () => {
+  const teacherEmail = "teacher1@agora.com";
+  const userId = await getUserIdByEmail(teacherEmail);
+  assert.ok(userId);
+
+  const session = await loginBundle(teacherEmail, "teach123");
+  assert.equal(await waitForAuditAction("auth.session.login", userId), true);
+
+  const logout = await jsonRequest("/api/v1/auth/logout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      refresh_token: session.refresh_token,
+    }),
+  });
+  assert.equal(logout.status, 200, JSON.stringify(logout.body));
+  assert.equal(logout.body?.data?.logged_out, true);
+  assert.equal(await waitForAuditAction("auth.session.logout", userId), true);
+
+  const failed = await jsonRequest("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      school_code: "agora_demo",
+      email: teacherEmail,
+      password: "wrong-password",
+    }),
+  });
+  assert.equal(failed.status, 401);
+  assert.equal(await waitForFailedLoginAudit(teacherEmail), true);
+});
+
 test("admin audit list is protected by RBAC", async () => {
   const teacherToken = await login("teacher1@agora.com", "teach123");
   const denied = await jsonRequest("/api/v1/admin/audit-logs", {
@@ -130,6 +299,8 @@ test("admin audit list is protected by RBAC", async () => {
 
 test("write requests are logged and audit export works", async () => {
   const adminToken = await login("admin@agora.com", "admin123");
+  const adminUserId = await getUserIdByEmail("admin@agora.com");
+  assert.ok(adminUserId);
 
   const uniqueTitle = `CI Audit Event ${crypto.randomUUID().slice(0, 8)}`;
   const createEvent = await jsonRequest("/api/v1/events", {
@@ -176,6 +347,7 @@ test("write requests are logged and audit export works", async () => {
     exportText,
     /Created At,Actor Name,Actor Email,Action,Entity,Entity ID,Metadata/
   );
+  assert.equal(await waitForAuditAction("security.audit.exported", adminUserId), true);
 });
 
 test("device ingest creates/updates attendance with API key auth", async () => {
@@ -273,6 +445,40 @@ test("tenant boundary blocks cross-school hints", async () => {
   assert.equal(result.status, 403);
   assert.equal(result.body?.success, false);
   assert.equal(result.body?.error?.code, "TENANT_SCOPE_MISMATCH");
+});
+
+test("deactivated users are denied even with a still-valid access token", async () => {
+  const teacherEmail = "teacher1@agora.com";
+  const teacherToken = await login(teacherEmail, "teach123");
+  const teacherId = await getUserIdByEmail(teacherEmail);
+  assert.ok(teacherId);
+
+  await pool.query(
+    `
+      UPDATE users
+      SET is_active = FALSE
+      WHERE school_id = $1
+        AND id = $2
+    `,
+    [SCHOOL_ID, teacherId]
+  );
+
+  try {
+    const me = await jsonRequest("/api/v1/auth/me", {
+      headers: { Authorization: `Bearer ${teacherToken}` },
+    });
+    assert.equal(me.status, 401, JSON.stringify(me.body));
+  } finally {
+    await pool.query(
+      `
+        UPDATE users
+        SET is_active = TRUE
+        WHERE school_id = $1
+          AND id = $2
+      `,
+      [SCHOOL_ID, teacherId]
+    );
+  }
 });
 
 test("internal observability metrics requires internal key", async () => {
