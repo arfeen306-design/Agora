@@ -1969,13 +1969,21 @@ export interface HrSelfOverview {
   }>;
 }
 
+export interface HrStaffProfilePayload {
+  profile: Record<string, unknown>;
+  attendance_summary: Record<string, unknown>;
+  leave_summary: Record<string, unknown>;
+  latest_payroll_record?: Record<string, unknown> | null;
+  latest_salary_structure?: Record<string, unknown> | null;
+}
+
 export async function getHrDashboardSummary() {
   const res = await request<HrDashboardSummary>("/people/hr/dashboard/summary");
   return res.data;
 }
 
 export async function getHrStaffProfile(staffId: string) {
-  const res = await request(`/people/hr/staff/${staffId}/profile`);
+  const res = await request<HrStaffProfilePayload>(`/people/hr/staff/${staffId}/profile`);
   return res.data;
 }
 
@@ -2089,8 +2097,15 @@ export async function createHrPayrollPeriod(data: {
   });
 }
 
+export interface HrPayrollGenerateResult {
+  period_id: string;
+  period_status: string;
+  generated_records: number;
+  skipped_staff_without_structure: number;
+}
+
 export async function generateHrPayroll(periodId: string) {
-  return request(`/people/hr/payroll/periods/${periodId}/generate`, {
+  return request<HrPayrollGenerateResult>(`/people/hr/payroll/periods/${periodId}/generate`, {
     method: "POST",
   });
 }

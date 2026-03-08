@@ -16,6 +16,7 @@ import {
   getHrSalaryStructures,
   getHrStaffProfile,
   updateHrStaffProfile,
+  type HrStaffProfilePayload,
   type HrSalaryAdjustmentRecord,
   type HrSalaryStructureRecord,
 } from "@/lib/api";
@@ -60,7 +61,7 @@ export default function HrStaffProfilePage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const [profileResponse, setProfileResponse] = useState<Record<string, unknown> | null>(null);
+  const [profileResponse, setProfileResponse] = useState<HrStaffProfilePayload | null>(null);
   const [salaryStructures, setSalaryStructures] = useState<HrSalaryStructureRecord[]>([]);
   const [adjustments, setAdjustments] = useState<HrSalaryAdjustmentRecord[]>([]);
 
@@ -133,7 +134,7 @@ export default function HrStaffProfilePage() {
         getHrSalaryAdjustments(staffId, { page: "1", page_size: "50" }),
       ]);
 
-      setProfileResponse(profileData as Record<string, unknown>);
+      setProfileResponse(profileData);
       setSalaryStructures(structuresRes.data || []);
       setAdjustments(adjustmentRes.data || []);
 
