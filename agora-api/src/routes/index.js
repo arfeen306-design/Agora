@@ -21,6 +21,7 @@ const admissionsRouter = require("./admissions");
 const timetableRouter = require("./timetable");
 const disciplineRouter = require("./discipline");
 const hrRouter = require("./hr");
+const documentsRouter = require("./documents");
 
 const router = express.Router();
 
@@ -46,5 +47,6 @@ router.use(admissionsRouter);
 router.use(timetableRouter);
 router.use(disciplineRouter);
 router.use(hrRouter);
+router.use(documentsRouter);
 
 module.exports = router;
