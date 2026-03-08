@@ -88,6 +88,17 @@ const navItems = [
     roles: ["school_admin", "principal", "vice_principal", "headmistress", "hr_admin"],
   },
   {
+    label: "Documents",
+    href: "/dashboard/documents",
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3h7l5 5v13a1 1 0 01-1 1H7a2 2 0 01-2-2V5a2 2 0 012-2z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3v5h5M9 13h6M9 17h6M9 9h2" />
+      </svg>
+    ),
+    roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher", "front_desk", "hr_admin", "accountant"],
+  },
+  {
     label: "HR & Payroll",
     href: "/dashboard/hr",
     icon: (

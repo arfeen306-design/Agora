@@ -2157,3 +2157,175 @@ export async function getMyHrSalarySlip(recordId: string) {
 export async function downloadMyHrSalarySlipPdf(recordId: string) {
   return requestBlob(`/people/hr/me/payroll-records/${recordId}/salary-slip?format=pdf`);
 }
+
+// ─── Document Vault ───
+export interface DocumentCategoryOption {
+  code: string;
+  label: string;
+}
+
+export interface DocumentVaultItem {
+  id: string;
+  school_id: string;
+  title: string;
+  description?: string | null;
+  file_key: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  category: string;
+  scope_type: string;
+  scope_id?: string | null;
+  uploaded_by_user_id?: string | null;
+  uploaded_by_first_name?: string | null;
+  uploaded_by_last_name?: string | null;
+  version_no: number;
+  versions_count?: number;
+  downloads_count?: number;
+  is_archived: boolean;
+  expires_on?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentVaultAccessRule {
+  id: string;
+  access_type: "role" | "user";
+  role_code?: string | null;
+  user_id?: string | null;
+  can_view: boolean;
+  can_download: boolean;
+  created_at: string;
+}
+
+export interface DocumentVaultVersion {
+  id: string;
+  version_no: number;
+  file_key: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  uploaded_by_user_id?: string | null;
+  created_at: string;
+}
+
+export interface DocumentVaultDetailPayload {
+  document: DocumentVaultItem;
+  access_rules: DocumentVaultAccessRule[];
+  versions: DocumentVaultVersion[];
+}
+
+export interface CreateDocumentPayload {
+  title: string;
+  description?: string;
+  file_key: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  category: string;
+  scope_type: string;
+  scope_id?: string | null;
+  expires_on?: string | null;
+  metadata?: Record<string, unknown>;
+  access_rules?: Array<{
+    access_type: "role" | "user";
+    role_code?: string;
+    user_id?: string;
+    can_view?: boolean;
+    can_download?: boolean;
+  }>;
+}
+
+export interface UpdateDocumentPayload {
+  title?: string;
+  description?: string | null;
+  category?: string;
+  scope_type?: string;
+  scope_id?: string | null;
+  expires_on?: string | null;
+  is_archived?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DocumentDownloadTarget {
+  url: string;
+  expires_at?: string;
+  method?: string;
+}
+
+export async function getDocumentCategories() {
+  const res = await request<DocumentCategoryOption[]>("/documents/categories");
+  return res.data;
+}
+
+export async function getDocuments(
+  params: {
+    search?: string;
+    category?: string;
+    scope_type?: string;
+    scope_id?: string;
+    include_archived?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  if (params.category) query.set("category", params.category);
+  if (params.scope_type) query.set("scope_type", params.scope_type);
+  if (params.scope_id) query.set("scope_id", params.scope_id);
+  if (params.include_archived) query.set("include_archived", "true");
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentVaultItem[]>(`/documents${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function createDocument(data: CreateDocumentPayload) {
+  const res = await request<DocumentVaultItem>("/documents", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function updateDocument(documentId: string, data: UpdateDocumentPayload) {
+  const res = await request<DocumentVaultItem>(`/documents/${documentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function getDocumentDetail(documentId: string) {
+  const res = await request<DocumentVaultDetailPayload>(`/documents/${documentId}`);
+  return res.data;
+}
+
+export async function addDocumentVersion(
+  documentId: string,
+  data: {
+    file_key: string;
+    file_name: string;
+    file_size_bytes: number;
+    mime_type: string;
+  }
+) {
+  const res = await request<DocumentVaultVersion>(`/documents/${documentId}/versions`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function issueDocumentDownloadUrl(documentId: string) {
+  const res = await request<{
+    document_id: string;
+    file_key: string;
+    download: DocumentDownloadTarget;
+  }>(`/documents/${documentId}/download-url`, {
+    method: "POST",
+  });
+  return res.data;
+}
