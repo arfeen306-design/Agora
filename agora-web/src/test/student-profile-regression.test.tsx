@@ -12,6 +12,8 @@ const mockGetPeopleStudentTimeline = vi.fn();
 const mockGetStudentMarksSummary = vi.fn();
 const mockGetFeeInvoices = vi.fn();
 const mockGetStudentDisciplineSummary = vi.fn();
+const mockGetStudentDocuments = vi.fn();
+const mockIssueDocumentDownloadUrl = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   useAuth: () => mockUseAuth(),
@@ -32,6 +34,8 @@ vi.mock("@/lib/api", () => ({
   getStudentMarksSummary: (...args: unknown[]) => mockGetStudentMarksSummary(...args),
   getFeeInvoices: (...args: unknown[]) => mockGetFeeInvoices(...args),
   getStudentDisciplineSummary: (...args: unknown[]) => mockGetStudentDisciplineSummary(...args),
+  getStudentDocuments: (...args: unknown[]) => mockGetStudentDocuments(...args),
+  issueDocumentDownloadUrl: (...args: unknown[]) => mockIssueDocumentDownloadUrl(...args),
 }));
 
 function buildStudentProfile() {
@@ -83,6 +87,8 @@ describe("Student profile regression coverage", () => {
     mockGetStudentMarksSummary.mockReset();
     mockGetFeeInvoices.mockReset();
     mockGetStudentDisciplineSummary.mockReset();
+    mockGetStudentDocuments.mockReset();
+    mockIssueDocumentDownloadUrl.mockReset();
   });
 
   test("shows access restricted state for role without student profile access", async () => {
@@ -165,6 +171,7 @@ describe("Student profile regression coverage", () => {
       },
     });
     mockGetFeeInvoices.mockResolvedValue({ data: [] });
+    mockGetStudentDocuments.mockResolvedValue({ data: [] });
     mockGetStudentDisciplineSummary.mockResolvedValue({
       student_id: "student-1",
       total_incidents: 2,
@@ -210,7 +217,8 @@ describe("Student profile regression coverage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Documents" }));
     expect(
-      screen.getByText(/Student documents, certificates, and report cards will appear here in the upcoming document module/i)
+      screen.getByText(/Certificates, report cards, medical records, and official student documents are listed below/i)
     ).toBeInTheDocument();
+    expect(screen.getByText(/No student documents available yet/i)).toBeInTheDocument();
   });
 });

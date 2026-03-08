@@ -5,12 +5,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import {
+  addDocumentVersion,
+  archiveDocument,
   ApiError,
   createDocument,
+  getDocumentDetail,
   getDocumentCategories,
   getDocuments,
   issueDocumentDownloadUrl,
+  setDocumentAccessRules,
   updateDocument,
+  type DocumentAccessRuleInput,
+  type DocumentVaultAccessRule,
+  type DocumentVaultDetailPayload,
   type DocumentCategoryOption,
   type DocumentVaultItem,
 } from "@/lib/api";
@@ -34,6 +41,8 @@ const DOCUMENT_MANAGE_ROLES = [
   "hr_admin",
   "accountant",
 ];
+
+const DOCUMENT_ACCESS_GOVERNANCE_ROLES = ["school_admin", "principal"];
 
 function hasAnyRole(userRoles: string[] = [], roles: string[]) {
   return roles.some((role) => userRoles.includes(role));
@@ -59,11 +68,22 @@ function scopeLabel(item: DocumentVaultItem) {
   return `${item.scope_type} • ${item.scope_id.slice(0, 8)}…`;
 }
 
+function toAccessRuleInput(rules: DocumentVaultAccessRule[]): DocumentAccessRuleInput[] {
+  return rules.map((rule) => ({
+    access_type: rule.access_type,
+    role_code: rule.role_code || undefined,
+    user_id: rule.user_id || undefined,
+    can_view: rule.can_view,
+    can_download: rule.can_download,
+  }));
+}
+
 export default function DocumentsPage() {
   const { user } = useAuth();
   const roles = user?.roles || [];
   const canView = hasAnyRole(roles, DOCUMENT_VIEW_ROLES);
   const canManage = hasAnyRole(roles, DOCUMENT_MANAGE_ROLES);
+  const canGovernAccess = hasAnyRole(roles, DOCUMENT_ACCESS_GOVERNANCE_ROLES);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -79,6 +99,20 @@ export default function DocumentsPage() {
     include_archived: false,
   });
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailSubmitting, setDetailSubmitting] = useState(false);
+  const [selectedDocumentId, setSelectedDocumentId] = useState("");
+  const [selectedDocumentDetail, setSelectedDocumentDetail] = useState<DocumentVaultDetailPayload | null>(null);
+  const [versionForm, setVersionForm] = useState({
+    file_name: "",
+    file_key: "",
+    file_size_bytes: "1024",
+    mime_type: "application/pdf",
+  });
+  const [accessRoleForm, setAccessRoleForm] = useState({
+    role_code: "teacher",
+    can_download: false,
+  });
   const [createForm, setCreateForm] = useState({
     title: "",
     description: "",
@@ -117,6 +151,39 @@ export default function DocumentsPage() {
       setLoading(false);
     }
   }, [canView, filters.category, filters.include_archived, filters.search, page]);
+
+  const loadDocumentDetail = useCallback(async (documentId: string) => {
+    setDetailLoading(true);
+    setError("");
+    try {
+      const detail = await getDocumentDetail(documentId);
+      setSelectedDocumentId(documentId);
+      setSelectedDocumentDetail(detail);
+      setVersionForm({
+        file_name: detail.file_name || "",
+        file_key: detail.file_key || "",
+        file_size_bytes: String(detail.file_size_bytes || 0),
+        mime_type: detail.mime_type || "application/pdf",
+      });
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to load document detail."));
+      setSelectedDocumentId("");
+      setSelectedDocumentDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const closeDetailPanel = useCallback(() => {
+    setSelectedDocumentId("");
+    setSelectedDocumentDetail(null);
+    setVersionForm({
+      file_name: "",
+      file_key: "",
+      file_size_bytes: "1024",
+      mime_type: "application/pdf",
+    });
+  }, []);
 
   useEffect(() => {
     if (!canView) return;
@@ -208,10 +275,74 @@ export default function DocumentsPage() {
   async function handleArchiveToggle(item: DocumentVaultItem) {
     if (!canManage) return;
     try {
-      await updateDocument(item.id, { is_archived: !item.is_archived });
+      if (item.is_archived) {
+        await updateDocument(item.id, { is_archived: false });
+      } else {
+        await archiveDocument(item.id, true);
+      }
       await loadDocuments();
+      if (selectedDocumentId === item.id) {
+        await loadDocumentDetail(item.id);
+      }
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Failed to update document status."));
+    }
+  }
+
+  async function handleAddVersion() {
+    if (!selectedDocumentId || !canManage) return;
+    if (!versionForm.file_key.trim() || !versionForm.file_name.trim()) {
+      setError("Please provide version file key and file name.");
+      return;
+    }
+    setDetailSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      await addDocumentVersion(selectedDocumentId, {
+        file_key: versionForm.file_key.trim(),
+        file_name: versionForm.file_name.trim(),
+        file_size_bytes: Number(versionForm.file_size_bytes || 0),
+        mime_type: versionForm.mime_type.trim(),
+      });
+      setMessage("New document version added.");
+      await Promise.all([loadDocuments(), loadDocumentDetail(selectedDocumentId)]);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to add document version."));
+    } finally {
+      setDetailSubmitting(false);
+    }
+  }
+
+  async function handleAddRoleAccessRule() {
+    if (!selectedDocumentId || !selectedDocumentDetail || !canGovernAccess) return;
+    const roleCode = accessRoleForm.role_code.trim();
+    if (!roleCode) {
+      setError("Role code is required for access rule.");
+      return;
+    }
+
+    const existingRules = toAccessRuleInput(selectedDocumentDetail.access_rules).filter(
+      (rule) => !(rule.access_type === "role" && rule.role_code === roleCode)
+    );
+    existingRules.push({
+      access_type: "role",
+      role_code: roleCode,
+      can_view: true,
+      can_download: accessRoleForm.can_download,
+    });
+
+    setDetailSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      await setDocumentAccessRules(selectedDocumentId, existingRules);
+      setMessage("Access rules updated.");
+      await loadDocumentDetail(selectedDocumentId);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to update access rules."));
+    } finally {
+      setDetailSubmitting(false);
     }
   }
 
@@ -431,6 +562,12 @@ export default function DocumentsPage() {
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
                         <button
+                          className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                          onClick={() => loadDocumentDetail(item.id)}
+                        >
+                          View
+                        </button>
+                        <button
                           className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
                           onClick={() => handleDownload(item.id)}
                         >
@@ -452,6 +589,150 @@ export default function DocumentsPage() {
             </tbody>
           </table>
         </section>
+
+        {(detailLoading || selectedDocumentDetail) && (
+          <section className="card border border-indigo-100">
+            {detailLoading ? (
+              <p className="text-sm text-gray-500">Loading document detail...</p>
+            ) : selectedDocumentDetail ? (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">Document Detail</p>
+                    <h3 className="mt-1 text-xl font-bold text-gray-900">{selectedDocumentDetail.title}</h3>
+                    <p className="mt-1 text-sm text-gray-600">{selectedDocumentDetail.file_name}</p>
+                  </div>
+                  <button
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                    onClick={closeDetailPanel}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <DetailStat label="Category" value={selectedDocumentDetail.category} />
+                  <DetailStat label="Scope" value={scopeLabel(selectedDocumentDetail)} />
+                  <DetailStat label="Version" value={`v${selectedDocumentDetail.version_no}`} />
+                  <DetailStat label="Size" value={bytesLabel(selectedDocumentDetail.file_size_bytes)} />
+                  <DetailStat label="Updated" value={new Date(selectedDocumentDetail.updated_at).toLocaleString()} />
+                  <DetailStat label="Downloads" value={String(selectedDocumentDetail.downloads_count || 0)} />
+                </div>
+
+                <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <h4 className="text-sm font-semibold text-gray-900">Versions</h4>
+                    <div className="mt-3 space-y-2">
+                      {selectedDocumentDetail.versions.length === 0 ? (
+                        <p className="text-sm text-gray-500">No versions available.</p>
+                      ) : (
+                        selectedDocumentDetail.versions.map((version) => (
+                          <div key={version.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-gray-800">v{version.version_no}</span>
+                              <span className="text-xs text-gray-500">{new Date(version.created_at).toLocaleString()}</span>
+                            </div>
+                            <p className="mt-1 text-gray-700">{version.file_name}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {canManage && (
+                      <div className="mt-4 space-y-2 rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Add Version</p>
+                        <input
+                          className="input-field"
+                          placeholder="File name"
+                          value={versionForm.file_name}
+                          onChange={(e) => setVersionForm((prev) => ({ ...prev, file_name: e.target.value }))}
+                        />
+                        <input
+                          className="input-field"
+                          placeholder="File key"
+                          value={versionForm.file_key}
+                          onChange={(e) => setVersionForm((prev) => ({ ...prev, file_key: e.target.value }))}
+                        />
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          <input
+                            className="input-field"
+                            type="number"
+                            min={0}
+                            placeholder="File size bytes"
+                            value={versionForm.file_size_bytes}
+                            onChange={(e) => setVersionForm((prev) => ({ ...prev, file_size_bytes: e.target.value }))}
+                          />
+                          <input
+                            className="input-field"
+                            placeholder="MIME type"
+                            value={versionForm.mime_type}
+                            onChange={(e) => setVersionForm((prev) => ({ ...prev, mime_type: e.target.value }))}
+                          />
+                        </div>
+                        <div className="flex justify-end">
+                          <button className="btn-primary" disabled={detailSubmitting} onClick={handleAddVersion}>
+                            {detailSubmitting ? "Saving..." : "Save Version"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <h4 className="text-sm font-semibold text-gray-900">Access Rules</h4>
+                    <div className="mt-3 space-y-2">
+                      {selectedDocumentDetail.access_rules.length === 0 ? (
+                        <p className="text-sm text-gray-500">No explicit rules. Role scope applies.</p>
+                      ) : (
+                        selectedDocumentDetail.access_rules.map((rule) => (
+                          <div key={rule.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                            <p className="font-semibold text-gray-800">
+                              {rule.access_type === "role" ? `Role: ${rule.role_code}` : `User: ${rule.user_id}`}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-600">
+                              View: {rule.can_view ? "Yes" : "No"} • Download: {rule.can_download ? "Yes" : "No"}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {canGovernAccess && (
+                      <div className="mt-4 space-y-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                          Add / Replace Role Access Rule
+                        </p>
+                        <input
+                          className="input-field"
+                          placeholder="role_code (example: parent)"
+                          value={accessRoleForm.role_code}
+                          onChange={(e) => setAccessRoleForm((prev) => ({ ...prev, role_code: e.target.value }))}
+                        />
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={accessRoleForm.can_download}
+                            onChange={(e) => setAccessRoleForm((prev) => ({ ...prev, can_download: e.target.checked }))}
+                          />
+                          Allow download
+                        </label>
+                        <div className="flex justify-end">
+                          <button
+                            className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-70"
+                            onClick={handleAddRoleAccessRule}
+                            disabled={detailSubmitting}
+                          >
+                            {detailSubmitting ? "Saving..." : "Update Access"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        )}
 
         <div className="flex items-center justify-between text-sm text-gray-600">
           <p>
@@ -484,6 +765,15 @@ function SummaryChip({ label, value }: { label: string; value: number }) {
     <div className="rounded-xl border border-white/25 bg-white/10 px-4 py-3">
       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-100">{label}</p>
       <p className="mt-1 text-2xl font-extrabold text-white">{value}</p>
+    </div>
+  );
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-1 text-sm font-medium text-gray-900">{value}</p>
     </div>
   );
 }

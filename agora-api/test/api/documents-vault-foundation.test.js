@@ -13,6 +13,8 @@ let baseUrl;
 
 const SCHOOL_ID = "10000000-0000-0000-0000-000000000001";
 const CLASSROOM_ID = "60000000-0000-0000-0000-000000000001";
+const STUDENT_ID_ONE = "40000000-0000-0000-0000-000000000001";
+const STUDENT_ID_TWO = "40000000-0000-0000-0000-000000000002";
 
 const USER_ID_ACCOUNTANT = "20000000-0000-0000-0000-000000000008";
 
@@ -286,4 +288,93 @@ test("document listing supports category filter and include_archived toggle", as
     true,
     "Archived doc should appear with include_archived=true"
   );
+});
+
+test("student document endpoint enforces scope and leadership-only access rule updates", async () => {
+  const adminToken = await login("admin@agora.com", "admin123");
+  const principalToken = await login("principal@agora.com", "principal123");
+  const teacherToken = await login("teacher1@agora.com", "teach123");
+  const parentToken = await login("parent1@agora.com", "pass123");
+  const studentToken = await login("student1@agora.com", "student123");
+
+  const createResponse = await jsonRequest("/api/v1/documents", {
+    method: "POST",
+    headers: authJson(adminToken),
+    body: JSON.stringify({
+      title: "Midterm report card",
+      description: "Student report card copy",
+      file_key: buildFileKey("pdf"),
+      file_name: "report-card.pdf",
+      file_size_bytes: 2048,
+      mime_type: "application/pdf",
+      category: "report_card",
+      scope_type: "student",
+      scope_id: STUDENT_ID_ONE,
+      metadata: {
+        term: "midterm",
+      },
+      access_rules: [{ access_type: "role", role_code: "parent", can_view: true, can_download: true }],
+    }),
+  });
+  assert.equal(createResponse.status, 201, JSON.stringify(createResponse.body));
+  const documentId = createResponse.body?.data?.id;
+  assert.ok(documentId);
+
+  const parentStudentDocs = await jsonRequest(`/api/v1/documents/student/${STUDENT_ID_ONE}?page=1&page_size=10`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${parentToken}` },
+  });
+  assert.equal(parentStudentDocs.status, 200, JSON.stringify(parentStudentDocs.body));
+  assert.ok(parentStudentDocs.body?.data?.some((row) => row.id === documentId));
+
+  const studentForbidden = await jsonRequest(`/api/v1/documents/student/${STUDENT_ID_TWO}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${studentToken}` },
+  });
+  assert.equal(studentForbidden.status, 403, JSON.stringify(studentForbidden.body));
+
+  const teacherAccessDenied = await jsonRequest(`/api/v1/documents/${documentId}/access`, {
+    method: "POST",
+    headers: authJson(teacherToken),
+    body: JSON.stringify({
+      access_rules: [{ access_type: "role", role_code: "teacher", can_view: true, can_download: true }],
+    }),
+  });
+  assert.equal(teacherAccessDenied.status, 403, JSON.stringify(teacherAccessDenied.body));
+
+  const principalAccessUpdate = await jsonRequest(`/api/v1/documents/${documentId}/access`, {
+    method: "POST",
+    headers: authJson(principalToken),
+    body: JSON.stringify({
+      access_rules: [{ access_type: "role", role_code: "student", can_view: true, can_download: false }],
+    }),
+  });
+  assert.equal(principalAccessUpdate.status, 200, JSON.stringify(principalAccessUpdate.body));
+  assert.equal(principalAccessUpdate.body?.data?.document_id, documentId);
+  assert.equal(principalAccessUpdate.body?.data?.access_rules?.[0]?.role_code, "student");
+
+  const archiveResponse = await jsonRequest(`/api/v1/documents/${documentId}/archive`, {
+    method: "PATCH",
+    headers: authJson(principalToken),
+    body: JSON.stringify({ is_archived: true }),
+  });
+  assert.equal(archiveResponse.status, 200, JSON.stringify(archiveResponse.body));
+  assert.equal(archiveResponse.body?.data?.is_archived, true);
+
+  const defaultListAfterArchive = await jsonRequest(`/api/v1/documents/student/${STUDENT_ID_ONE}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${principalToken}` },
+  });
+  assert.equal(defaultListAfterArchive.status, 200, JSON.stringify(defaultListAfterArchive.body));
+  assert.equal(defaultListAfterArchive.body?.data?.some((row) => row.id === documentId), false);
+
+  const includeArchivedList = await jsonRequest(
+    `/api/v1/documents/student/${STUDENT_ID_ONE}?include_archived=true&page=1&page_size=10`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(includeArchivedList.status, 200, JSON.stringify(includeArchivedList.body));
+  assert.equal(includeArchivedList.body?.data?.some((row) => row.id === documentId), true);
 });

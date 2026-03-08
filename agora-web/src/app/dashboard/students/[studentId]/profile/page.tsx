@@ -8,12 +8,15 @@ import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import {
   ApiError,
+  getStudentDocuments,
   getStudentDisciplineSummary,
   getFeeInvoices,
   getPeopleStudent,
   getPeopleStudentAcademicSummary,
   getPeopleStudentTimeline,
   getStudentMarksSummary,
+  issueDocumentDownloadUrl,
+  type DocumentVaultItem,
   type DisciplineIncidentRecord,
   type StudentAcademicSummaryRecord,
   type StudentDetailRecord,
@@ -173,6 +176,15 @@ export default function StudentProfilePage() {
   );
   const canViewFinance = hasAnyRole(roles, ["school_admin", "principal", "vice_principal", "accountant", "parent"]);
   const canViewInternalNotes = hasAnyRole(roles, ["school_admin", "principal", "vice_principal", "headmistress", "teacher"]);
+  const canViewStudentDocuments = hasAnyRole(roles, [
+    "school_admin",
+    "principal",
+    "vice_principal",
+    "headmistress",
+    "teacher",
+    "parent",
+    "student",
+  ]);
 
   const [tab, setTab] = useState<StudentTab>("overview");
   const [timelineWindow, setTimelineWindow] = useState<TimelineWindow>("30d");
@@ -187,6 +199,8 @@ export default function StudentProfilePage() {
   const [timeline, setTimeline] = useState<StudentTimelineEvent[]>([]);
   const [marksSummary, setMarksSummary] = useState<MarksSummaryData | null>(null);
   const [feeInvoices, setFeeInvoices] = useState<FeeInvoiceItem[]>([]);
+  const [studentDocuments, setStudentDocuments] = useState<DocumentVaultItem[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!studentId || !canOpen) {
@@ -238,6 +252,20 @@ export default function StudentProfilePage() {
         setMarksSummary(null);
       }
 
+      if (canViewStudentDocuments) {
+        try {
+          setDocumentsLoading(true);
+          const docsResponse = await getStudentDocuments(studentId, { page_size: 50 });
+          setStudentDocuments(Array.isArray(docsResponse.data) ? docsResponse.data : []);
+        } catch {
+          setStudentDocuments([]);
+        } finally {
+          setDocumentsLoading(false);
+        }
+      } else {
+        setStudentDocuments([]);
+      }
+
       if (canViewFinance) {
         try {
           const invoicesResponse = await getFeeInvoices({ student_id: studentId, page_size: "80" });
@@ -257,15 +285,27 @@ export default function StudentProfilePage() {
       setDisciplineSummary(null);
       setMarksSummary(null);
       setFeeInvoices([]);
+      setStudentDocuments([]);
       setError(extractErrorMessage(err, "Failed to load student profile"));
     } finally {
       setLoading(false);
     }
-  }, [canOpen, canViewFinance, studentId, timelineWindow]);
+  }, [canOpen, canViewFinance, canViewStudentDocuments, studentId, timelineWindow]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  async function handleStudentDocumentDownload(documentId: string) {
+    try {
+      const data = await issueDocumentDownloadUrl(documentId);
+      if (data.download?.url) {
+        window.open(data.download.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err: unknown) {
+      setNotice(extractErrorMessage(err, "Unable to generate document download link."));
+    }
+  }
 
   const attendanceEvents = useMemo(
     () => timeline.filter((event) => event.type === "attendance"),
@@ -684,11 +724,76 @@ export default function StudentProfilePage() {
         )}
 
         {tab === "documents" && (
-          <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-6">
-            <h3 className="text-lg font-semibold text-cyan-900">Document Vault (Upcoming)</h3>
-            <p className="mt-2 text-sm text-cyan-800">
-              Student documents, certificates, and report cards will appear here in the upcoming document module.
-            </p>
+          <section className="space-y-4">
+            {!canViewStudentDocuments ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+                Document visibility is not available for your current role.
+              </div>
+            ) : (
+              <>
+                <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+                  <h3 className="text-lg font-semibold text-cyan-900">Student Document Vault</h3>
+                  <p className="mt-1 text-sm text-cyan-800">
+                    Certificates, report cards, medical records, and official student documents are listed below.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h4 className="text-lg font-semibold text-gray-900">Documents</h4>
+                    <span className="badge-blue">{studentDocuments.length} items</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-500">
+                          <th className="py-2 pr-3">Title</th>
+                          <th className="py-2 pr-3">Category</th>
+                          <th className="py-2 pr-3">Version</th>
+                          <th className="py-2 pr-3">Updated</th>
+                          <th className="py-2 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {documentsLoading ? (
+                          <tr>
+                            <td className="py-4 text-gray-400" colSpan={5}>
+                              Loading documents...
+                            </td>
+                          </tr>
+                        ) : studentDocuments.length === 0 ? (
+                          <tr>
+                            <td className="py-4 text-gray-400" colSpan={5}>
+                              No student documents available yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          studentDocuments.map((doc) => (
+                            <tr key={doc.id} className="border-b border-gray-100 last:border-b-0">
+                              <td className="py-2 pr-3">
+                                <p className="font-semibold text-gray-900">{doc.title}</p>
+                                <p className="text-xs text-gray-500">{doc.file_name}</p>
+                              </td>
+                              <td className="py-2 pr-3 text-gray-700">{doc.category.replaceAll("_", " ")}</td>
+                              <td className="py-2 pr-3 text-gray-700">v{doc.version_no}</td>
+                              <td className="py-2 pr-3 text-gray-700">{formatDateTime(doc.updated_at)}</td>
+                              <td className="py-2 text-right">
+                                <button
+                                  className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                                  onClick={() => handleStudentDocumentDownload(doc.id)}
+                                >
+                                  Download
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
           </section>
         )}
 

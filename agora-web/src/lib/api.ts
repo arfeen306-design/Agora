@@ -2225,10 +2225,17 @@ export interface DocumentVaultVersion {
   created_at: string;
 }
 
-export interface DocumentVaultDetailPayload {
-  document: DocumentVaultItem;
+export interface DocumentVaultDetailPayload extends DocumentVaultItem {
   access_rules: DocumentVaultAccessRule[];
   versions: DocumentVaultVersion[];
+}
+
+export interface DocumentAccessRuleInput {
+  access_type: "role" | "user";
+  role_code?: string;
+  user_id?: string;
+  can_view?: boolean;
+  can_download?: boolean;
 }
 
 export interface CreateDocumentPayload {
@@ -2243,13 +2250,7 @@ export interface CreateDocumentPayload {
   scope_id?: string | null;
   expires_on?: string | null;
   metadata?: Record<string, unknown>;
-  access_rules?: Array<{
-    access_type: "role" | "user";
-    role_code?: string;
-    user_id?: string;
-    can_view?: boolean;
-    can_download?: boolean;
-  }>;
+  access_rules?: DocumentAccessRuleInput[];
 }
 
 export interface UpdateDocumentPayload {
@@ -2261,6 +2262,7 @@ export interface UpdateDocumentPayload {
   expires_on?: string | null;
   is_archived?: boolean;
   metadata?: Record<string, unknown>;
+  access_rules?: DocumentAccessRuleInput[];
 }
 
 export interface DocumentDownloadTarget {
@@ -2315,6 +2317,43 @@ export async function updateDocument(documentId: string, data: UpdateDocumentPay
 
 export async function getDocumentDetail(documentId: string) {
   const res = await request<DocumentVaultDetailPayload>(`/documents/${documentId}`);
+  return res.data;
+}
+
+export async function getStudentDocuments(
+  studentId: string,
+  params: {
+    include_archived?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.include_archived) query.set("include_archived", "true");
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentVaultItem[]>(
+    `/documents/student/${studentId}${suffix ? `?${suffix}` : ""}`
+  );
+}
+
+export async function setDocumentAccessRules(documentId: string, accessRules: DocumentAccessRuleInput[]) {
+  const res = await request<{
+    document_id: string;
+    access_rules: DocumentVaultAccessRule[];
+  }>(`/documents/${documentId}/access`, {
+    method: "POST",
+    body: JSON.stringify({ access_rules: accessRules }),
+  });
+  return res.data;
+}
+
+export async function archiveDocument(documentId: string, isArchived = true) {
+  const res = await request<DocumentVaultItem>(`/documents/${documentId}/archive`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_archived: isArchived }),
+  });
   return res.data;
 }
 

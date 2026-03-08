@@ -205,7 +205,8 @@ describe("Parent pages access", () => {
     await waitFor(() => {
       expect(mockGetPeopleParent).toHaveBeenCalledWith("parent-1");
     });
-    expect(screen.getAllByText("Amina Khan").length).toBeGreaterThan(0);
+    const parentNames = await screen.findAllByText("Amina Khan");
+    expect(parentNames.length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linked Children").length).toBeGreaterThan(0);
     expect(screen.getByText("Zain Khan")).toBeInTheDocument();
   });

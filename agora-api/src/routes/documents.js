@@ -140,11 +140,29 @@ const documentPathSchema = z.object({
   documentId: z.string().uuid(),
 });
 
+const studentPathSchema = z.object({
+  studentId: z.string().uuid(),
+});
+
+const studentDocumentsQuerySchema = z.object({
+  include_archived: z.coerce.boolean().default(false),
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 const createDocumentVersionSchema = z.object({
   file_key: z.string().trim().min(8).max(1024),
   file_name: z.string().trim().min(1).max(255),
   file_size_bytes: z.coerce.number().int().min(0).max(1024 * 1024 * 100),
   mime_type: z.string().trim().min(3).max(150),
+});
+
+const setDocumentAccessRulesSchema = z.object({
+  access_rules: z.array(accessRuleSchema).max(50).default([]),
+});
+
+const archiveDocumentSchema = z.object({
+  is_archived: z.boolean().default(true),
 });
 
 function parseSchema(schema, input, message = "Invalid request input") {
@@ -340,25 +358,27 @@ async function getScopeContext(auth) {
 function applyRoleScopedWhere({ auth, where, params, context }) {
   if (isLeadership(auth)) return;
 
-  const ruleClause = (permissionType) => `
+  const ruleClause = (permissionType, userParamIndex, rolesParamIndex) => `
     EXISTS (
       SELECT 1
       FROM document_access_rules dar
       WHERE dar.school_id = d.school_id
         AND dar.document_id = d.id
         AND (
-          (dar.access_type = 'user' AND dar.user_id = $${params.length + 1} AND dar.${permissionType} = TRUE)
-          OR (dar.access_type = 'role' AND dar.role_code = ANY($${params.length + 2}::text[]) AND dar.${permissionType} = TRUE)
+          (dar.access_type = 'user' AND dar.user_id = $${userParamIndex} AND dar.${permissionType} = TRUE)
+          OR (dar.access_type = 'role' AND dar.role_code = ANY($${rolesParamIndex}::text[]) AND dar.${permissionType} = TRUE)
         )
     )
   `;
 
   if (hasRole(auth, "teacher")) {
     params.push(auth.userId, auth.roles, context.teacherClassroomIds || []);
+    const userParamIndex = params.length - 2;
+    const rolesParamIndex = params.length - 1;
     where.push(`
       (
         d.uploaded_by_user_id = $${params.length - 2}
-        OR ${ruleClause("can_view")}
+        OR ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR (
           d.scope_type = 'classroom'
           AND d.scope_id = ANY($${params.length}::uuid[])
@@ -381,9 +401,11 @@ function applyRoleScopedWhere({ auth, where, params, context }) {
 
   if (hasRole(auth, "headmistress")) {
     params.push(auth.userId, auth.roles, context.headmistressSectionIds || []);
+    const userParamIndex = params.length - 2;
+    const rolesParamIndex = params.length - 1;
     where.push(`
       (
-        ${ruleClause("can_view")}
+        ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR (
           d.scope_type = 'classroom'
           AND EXISTS (
@@ -415,9 +437,11 @@ function applyRoleScopedWhere({ auth, where, params, context }) {
 
   if (hasRole(auth, "parent")) {
     params.push(auth.userId, auth.roles, context.parentStudentIds || []);
+    const userParamIndex = params.length - 2;
+    const rolesParamIndex = params.length - 1;
     where.push(`
       (
-        ${ruleClause("can_view")}
+        ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR (
           d.scope_type = 'student'
           AND d.scope_id = ANY($${params.length}::uuid[])
@@ -429,9 +453,11 @@ function applyRoleScopedWhere({ auth, where, params, context }) {
 
   if (hasRole(auth, "student")) {
     params.push(auth.userId, auth.roles, context.studentId);
+    const userParamIndex = params.length - 2;
+    const rolesParamIndex = params.length - 1;
     where.push(`
       (
-        ${ruleClause("can_view")}
+        ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR (
           d.scope_type = 'student'
           AND d.scope_id = $${params.length}::uuid
@@ -443,9 +469,11 @@ function applyRoleScopedWhere({ auth, where, params, context }) {
 
   if (hasRole(auth, "hr_admin")) {
     params.push(auth.userId, auth.roles);
+    const userParamIndex = params.length - 1;
+    const rolesParamIndex = params.length;
     where.push(`
       (
-        ${ruleClause("can_view")}
+        ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR d.scope_type = 'staff'
         OR d.category IN ('hr_document', 'salary_slip', 'appointment_letter', 'contract', 'policy_document')
       )
@@ -455,9 +483,11 @@ function applyRoleScopedWhere({ auth, where, params, context }) {
 
   if (hasRole(auth, "accountant")) {
     params.push(auth.userId, auth.roles);
+    const userParamIndex = params.length - 1;
+    const rolesParamIndex = params.length;
     where.push(`
       (
-        ${ruleClause("can_view")}
+        ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR d.scope_type = 'finance'
         OR d.category IN ('fee_receipt', 'salary_slip')
       )
@@ -467,9 +497,11 @@ function applyRoleScopedWhere({ auth, where, params, context }) {
 
   if (hasRole(auth, "front_desk")) {
     params.push(auth.userId, auth.roles);
+    const userParamIndex = params.length - 1;
+    const rolesParamIndex = params.length;
     where.push(`
       (
-        ${ruleClause("can_view")}
+        ${ruleClause("can_view", userParamIndex, rolesParamIndex)}
         OR d.scope_type = 'admission'
         OR d.category IN ('admission_form', 'identity_document', 'certificate')
       )
@@ -558,6 +590,90 @@ function assertDocumentManagePermission({ auth, row, context }) {
   }
 
   throw new AppError(403, "FORBIDDEN", "No document vault manage permission for this role");
+}
+
+async function assertStudentDocumentScopeReadable({ auth, studentId, context, client = null }) {
+  const db = client || pool;
+  const studentRow = await db.query(
+    `
+      SELECT id
+      FROM students
+      WHERE school_id = $1
+        AND id = $2
+      LIMIT 1
+    `,
+    [auth.schoolId, studentId]
+  );
+  if (!studentRow.rows[0]) {
+    throw new AppError(404, "NOT_FOUND", "Student not found");
+  }
+
+  if (isLeadership(auth)) return;
+
+  if (hasRole(auth, "teacher")) {
+    const teacherClassroomIds = context.teacherClassroomIds || [];
+    if (teacherClassroomIds.length === 0) {
+      throw new AppError(403, "FORBIDDEN", "Teacher has no assigned classrooms for student documents");
+    }
+    const inScope = await db.query(
+      `
+        SELECT 1
+        FROM student_enrollments se
+        WHERE se.school_id = $1
+          AND se.student_id = $2
+          AND se.status = 'active'
+          AND se.classroom_id = ANY($3::uuid[])
+        LIMIT 1
+      `,
+      [auth.schoolId, studentId, teacherClassroomIds]
+    );
+    if (!inScope.rows[0]) {
+      throw new AppError(403, "FORBIDDEN", "Teacher can view documents only for assigned students");
+    }
+    return;
+  }
+
+  if (hasRole(auth, "headmistress")) {
+    const sectionIds = context.headmistressSectionIds || [];
+    if (sectionIds.length === 0) {
+      throw new AppError(403, "FORBIDDEN", "Headmistress has no assigned section");
+    }
+    const inScope = await db.query(
+      `
+        SELECT 1
+        FROM student_enrollments se
+        JOIN classrooms c
+          ON c.school_id = se.school_id
+         AND c.id = se.classroom_id
+        WHERE se.school_id = $1
+          AND se.student_id = $2
+          AND se.status = 'active'
+          AND c.section_id = ANY($3::uuid[])
+        LIMIT 1
+      `,
+      [auth.schoolId, studentId, sectionIds]
+    );
+    if (!inScope.rows[0]) {
+      throw new AppError(403, "FORBIDDEN", "Headmistress can view student documents only in assigned section");
+    }
+    return;
+  }
+
+  if (hasRole(auth, "parent")) {
+    if (!(context.parentStudentIds || []).includes(studentId)) {
+      throw new AppError(403, "FORBIDDEN", "Parent can view documents only for linked children");
+    }
+    return;
+  }
+
+  if (hasRole(auth, "student")) {
+    if (!context.studentId || context.studentId !== studentId) {
+      throw new AppError(403, "FORBIDDEN", "Student can view only own documents");
+    }
+    return;
+  }
+
+  throw new AppError(403, "FORBIDDEN", "No permission to view student documents");
 }
 
 async function ensureDocumentReadable({ auth, documentId, context, permissionType = "can_view", client = null }) {
@@ -948,6 +1064,99 @@ router.post(
 );
 
 router.get(
+  "/documents/student/:studentId",
+  requireAuth,
+  requireRoles(
+    "school_admin",
+    "principal",
+    "vice_principal",
+    "headmistress",
+    "teacher",
+    "parent",
+    "student"
+  ),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(studentPathSchema, req.params, "Invalid student id");
+    const query = parseSchema(studentDocumentsQuerySchema, req.query, "Invalid student documents query");
+    const context = await getScopeContext(req.auth);
+    await assertStudentDocumentScopeReadable({
+      auth: req.auth,
+      studentId: path.studentId,
+      context,
+    });
+
+    const where = [
+      "d.school_id = $1",
+      "d.scope_type = 'student'",
+      "d.scope_id = $2::uuid",
+    ];
+    const params = [req.auth.schoolId, path.studentId];
+
+    if (!query.include_archived) {
+      where.push("d.is_archived = FALSE");
+    }
+
+    applyRoleScopedWhere({
+      auth: req.auth,
+      where,
+      params,
+      context,
+    });
+
+    const countResult = await pool.query(
+      `
+        SELECT COUNT(*)::int AS total
+        FROM documents d
+        WHERE ${where.join(" AND ")}
+      `,
+      params
+    );
+    const totalItems = Number(countResult.rows[0]?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / query.page_size));
+    const offset = (query.page - 1) * query.page_size;
+
+    const listParams = [...params, query.page_size, offset];
+    const listRows = await pool.query(
+      `
+        SELECT
+          d.*,
+          u.first_name AS uploaded_by_first_name,
+          u.last_name AS uploaded_by_last_name,
+          (
+            SELECT COUNT(*)::int
+            FROM document_versions dv
+            WHERE dv.school_id = d.school_id
+              AND dv.document_id = d.id
+          ) AS versions_count,
+          (
+            SELECT COUNT(*)::int
+            FROM document_download_events dde
+            WHERE dde.school_id = d.school_id
+              AND dde.document_id = d.id
+          ) AS downloads_count
+        FROM documents d
+        LEFT JOIN users u
+          ON u.id = d.uploaded_by_user_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY d.updated_at DESC, d.created_at DESC
+        LIMIT $${listParams.length - 1}
+        OFFSET $${listParams.length}
+      `,
+      listParams
+    );
+
+    return success(res, listRows.rows, 200, {
+      pagination: {
+        page: query.page,
+        page_size: query.page_size,
+        total_items: totalItems,
+        total_pages: totalPages,
+      },
+    });
+  })
+);
+
+router.get(
   "/documents/:documentId",
   requireAuth,
   requireRoles(...DOCUMENT_VIEW_ROLES),
@@ -1096,6 +1305,121 @@ router.patch(
       });
 
       return success(res, updated.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  })
+);
+
+router.patch(
+  "/documents/:documentId/archive",
+  requireAuth,
+  requireRoles("school_admin", "principal"),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(documentPathSchema, req.params, "Invalid document id");
+    const body = parseSchema(archiveDocumentSchema, req.body || {}, "Invalid archive payload");
+    const context = await getScopeContext(req.auth);
+    const existing = await ensureDocumentReadable({
+      auth: req.auth,
+      documentId: path.documentId,
+      context,
+    });
+    assertDocumentManagePermission({
+      auth: req.auth,
+      row: existing,
+      context,
+    });
+
+    const updated = await pool.query(
+      `
+        UPDATE documents
+        SET
+          is_archived = $3,
+          updated_at = NOW()
+        WHERE school_id = $1
+          AND id = $2
+        RETURNING *
+      `,
+      [req.auth.schoolId, path.documentId, body.is_archived]
+    );
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: body.is_archived ? "documents.vault.archived" : "documents.vault.unarchived",
+      entityName: "documents",
+      entityId: path.documentId,
+      metadata: {
+        previous_is_archived: existing.is_archived,
+        next_is_archived: body.is_archived,
+      },
+    });
+
+    return success(res, updated.rows[0]);
+  })
+);
+
+router.post(
+  "/documents/:documentId/access",
+  requireAuth,
+  requireRoles("school_admin", "principal"),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(documentPathSchema, req.params, "Invalid document id");
+    const body = parseSchema(setDocumentAccessRulesSchema, req.body, "Invalid document access rules payload");
+    const context = await getScopeContext(req.auth);
+    const existing = await ensureDocumentReadable({
+      auth: req.auth,
+      documentId: path.documentId,
+      context,
+    });
+    assertDocumentManagePermission({
+      auth: req.auth,
+      row: existing,
+      context,
+    });
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      await replaceDocumentAccessRules({
+        client,
+        schoolId: req.auth.schoolId,
+        documentId: path.documentId,
+        rules: body.access_rules,
+      });
+
+      const rulesRows = await client.query(
+        `
+          SELECT id, access_type, role_code, user_id, can_view, can_download, created_at
+          FROM document_access_rules
+          WHERE school_id = $1
+            AND document_id = $2
+          ORDER BY created_at DESC
+        `,
+        [req.auth.schoolId, path.documentId]
+      );
+
+      await client.query("COMMIT");
+
+      fireAndForgetAuditLog({
+        schoolId: req.auth.schoolId,
+        actorUserId: req.auth.userId,
+        action: "documents.vault.access_rules_updated",
+        entityName: "documents",
+        entityId: path.documentId,
+        metadata: {
+          rules_count: rulesRows.rows.length,
+        },
+      });
+
+      return success(res, {
+        document_id: path.documentId,
+        access_rules: rulesRows.rows,
+      });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
