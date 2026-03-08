@@ -88,6 +88,39 @@ const navItems = [
     roles: ["school_admin", "principal", "vice_principal", "headmistress", "hr_admin"],
   },
   {
+    label: "HR & Payroll",
+    href: "/dashboard/hr",
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9h8M8 13h5M15 13h1" />
+      </svg>
+    ),
+    roles: ["school_admin", "principal", "vice_principal", "hr_admin", "accountant"],
+  },
+  {
+    label: "Payroll Runs",
+    href: "/dashboard/hr/payroll",
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16v12H4z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 10h16M8 14h3M8 17h5M16 14h2M15 17h3" />
+      </svg>
+    ),
+    roles: ["school_admin", "principal", "vice_principal", "hr_admin", "accountant"],
+  },
+  {
+    label: "My HR & Finance",
+    href: "/dashboard/hr/self-service",
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 20h14a1 1 0 001-1V7l-5-4H5a1 1 0 00-1 1v15a1 1 0 001 1z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3v4h4M8 12h8M8 16h6" />
+      </svg>
+    ),
+    roles: ["teacher"],
+  },
+  {
     label: "Parents",
     href: "/dashboard/people/parents",
     icon: (

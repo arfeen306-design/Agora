@@ -1826,3 +1826,334 @@ export async function getStudentDisciplineSummary(studentId: string) {
   const res = await request<StudentDisciplineSummaryRecord>(`/discipline/students/${studentId}/summary`);
   return res.data;
 }
+
+// ─── HR & Payroll ───
+export interface HrDashboardSummary {
+  month: string;
+  active_staff: number;
+  open_payroll_periods: number;
+  pending_adjustments: number;
+  pending_leave_requests: number;
+  current_month_net_payroll: number;
+}
+
+export interface HrSalaryStructureRecord {
+  id: string;
+  school_id: string;
+  staff_profile_id: string;
+  effective_from: string;
+  effective_to?: string | null;
+  base_salary: number;
+  allowances_json: Array<{ label: string; amount: number }>;
+  deductions_json: Array<{ label: string; amount: number }>;
+  bonuses_json: Array<{ label: string; amount: number }>;
+  provident_fund: number;
+  gop_fund: number;
+  currency_code: string;
+  is_active: boolean;
+  notes?: string | null;
+  created_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HrSalaryAdjustmentRecord {
+  id: string;
+  school_id: string;
+  staff_profile_id: string;
+  adjustment_type: "increment" | "allowance" | "deduction" | "bonus" | "one_time";
+  amount: number;
+  is_recurring: boolean;
+  effective_on: string;
+  expires_on?: string | null;
+  reason?: string | null;
+  notes?: string | null;
+  status: "pending" | "approved" | "rejected";
+  approved_by_user_id?: string | null;
+  created_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HrPayrollPeriodRecord {
+  id: string;
+  school_id: string;
+  period_label: string;
+  period_start: string;
+  period_end: string;
+  status: "draft" | "generated" | "closed" | "paid";
+  generated_by_user_id?: string | null;
+  generated_at?: string | null;
+  closed_at?: string | null;
+  payroll_record_count?: number;
+  net_payroll_total?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HrPayrollRecord {
+  id: string;
+  school_id: string;
+  payroll_period_id: string;
+  staff_profile_id: string;
+  salary_structure_id?: string | null;
+  base_salary: number;
+  allowances_total: number;
+  deductions_total: number;
+  bonus_total: number;
+  provident_fund: number;
+  gop_fund: number;
+  gross_salary: number;
+  net_salary: number;
+  breakdown_json: Record<string, unknown>;
+  payment_status: "pending" | "paid" | "cancelled";
+  paid_on?: string | null;
+  payment_method?: string | null;
+  finance_notes?: string | null;
+  generated_at: string;
+  created_at: string;
+  updated_at: string;
+  period_label?: string;
+  period_start?: string;
+  period_end?: string;
+  user_id?: string;
+  staff_code?: string | null;
+  designation?: string | null;
+  first_name?: string;
+  last_name?: string | null;
+  email?: string;
+}
+
+export interface HrAttendanceSummary {
+  month: string;
+  date_from: string;
+  date_to: string;
+  total_days: number;
+  present_days: number;
+  late_days: number;
+  absent_days: number;
+  leave_days: number;
+  first_check_in?: string | null;
+  last_check_out?: string | null;
+}
+
+export interface HrLeaveSummary {
+  month: string;
+  total_requests: number;
+  approved_requests: number;
+  pending_requests: number;
+  approved_days: number;
+}
+
+export interface HrSelfOverview {
+  profile: Record<string, unknown>;
+  attendance_summary: HrAttendanceSummary;
+  leave_summary: HrLeaveSummary;
+  current_salary_structure?: HrSalaryStructureRecord | null;
+  adjustments: HrSalaryAdjustmentRecord[];
+  payroll_history: HrPayrollRecord[];
+  payroll_pagination?: {
+    page: number;
+    page_size: number;
+    total_items: number;
+    total_pages: number;
+  };
+  documents: Array<{
+    id: string;
+    category: string;
+    document_name: string;
+    file_url: string;
+    expires_on?: string | null;
+    is_active: boolean;
+    created_at: string;
+  }>;
+}
+
+export async function getHrDashboardSummary() {
+  const res = await request<HrDashboardSummary>("/people/hr/dashboard/summary");
+  return res.data;
+}
+
+export async function getHrStaffProfile(staffId: string) {
+  const res = await request(`/people/hr/staff/${staffId}/profile`);
+  return res.data;
+}
+
+export async function updateHrStaffProfile(staffId: string, data: Record<string, unknown>) {
+  const res = await request(`/people/hr/staff/${staffId}/profile`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function getHrSalaryStructures(staffId: string, params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request<HrSalaryStructureRecord[]>(
+    `/people/hr/staff/${staffId}/salary-structures${query ? `?${query}` : ""}`
+  );
+}
+
+export async function createHrSalaryStructure(
+  staffId: string,
+  data: {
+    effective_from: string;
+    base_salary: number;
+    allowances?: Array<{ label: string; amount: number }>;
+    deductions?: Array<{ label: string; amount: number }>;
+    bonuses?: Array<{ label: string; amount: number }>;
+    provident_fund?: number;
+    gop_fund?: number;
+    currency_code?: string;
+    notes?: string;
+  }
+) {
+  return request<HrSalaryStructureRecord>(`/people/hr/staff/${staffId}/salary-structures`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getHrSalaryAdjustments(staffId: string, params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request<HrSalaryAdjustmentRecord[]>(
+    `/people/hr/staff/${staffId}/adjustments${query ? `?${query}` : ""}`
+  );
+}
+
+export async function createHrSalaryAdjustment(
+  staffId: string,
+  data: {
+    adjustment_type: "increment" | "allowance" | "deduction" | "bonus" | "one_time";
+    amount: number;
+    is_recurring?: boolean;
+    effective_on: string;
+    expires_on?: string;
+    reason?: string;
+    notes?: string;
+    status?: "pending" | "approved" | "rejected";
+  }
+) {
+  return request<HrSalaryAdjustmentRecord>(`/people/hr/staff/${staffId}/adjustments`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createHrAttendanceLog(
+  staffId: string,
+  data: {
+    attendance_date: string;
+    check_in_at?: string;
+    check_out_at?: string;
+    status?: "present" | "absent" | "late" | "leave";
+    note?: string;
+  }
+) {
+  return request(`/people/hr/staff/${staffId}/attendance-logs`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createHrLeaveRecord(
+  staffId: string,
+  data: {
+    leave_type?: string;
+    starts_on: string;
+    ends_on: string;
+    total_days?: number;
+    status?: "pending" | "approved" | "rejected" | "cancelled";
+    reason?: string;
+  }
+) {
+  return request(`/people/hr/staff/${staffId}/leave-records`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getHrPayrollPeriods(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request<HrPayrollPeriodRecord[]>(`/people/hr/payroll/periods${query ? `?${query}` : ""}`);
+}
+
+export async function createHrPayrollPeriod(data: {
+  period_label: string;
+  period_start: string;
+  period_end: string;
+}) {
+  return request<HrPayrollPeriodRecord>("/people/hr/payroll/periods", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function generateHrPayroll(periodId: string) {
+  return request(`/people/hr/payroll/periods/${periodId}/generate`, {
+    method: "POST",
+  });
+}
+
+export async function getHrPayrollRecords(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request<HrPayrollRecord[]>(`/people/hr/payroll/records${query ? `?${query}` : ""}`);
+}
+
+export async function getHrPayrollRecord(recordId: string) {
+  const res = await request<HrPayrollRecord>(`/people/hr/payroll/records/${recordId}`);
+  return res.data;
+}
+
+export async function updateHrPayrollPayment(
+  recordId: string,
+  data: {
+    payment_status: "pending" | "paid" | "cancelled";
+    paid_on?: string;
+    payment_method?: string;
+    finance_notes?: string;
+  }
+) {
+  return request<HrPayrollRecord>(`/people/hr/payroll/records/${recordId}/payment`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getHrSalarySlip(recordId: string) {
+  const res = await request(`/people/hr/payroll/records/${recordId}/salary-slip?format=json`);
+  return res.data;
+}
+
+export async function downloadHrSalarySlipPdf(recordId: string) {
+  return requestBlob(`/people/hr/payroll/records/${recordId}/salary-slip?format=pdf`);
+}
+
+export async function getMyHrOverview() {
+  const res = await request<HrSelfOverview>("/people/hr/me/overview");
+  return res.data;
+}
+
+export async function getMyHrAttendanceSummary(params: { month?: string } = {}) {
+  const query = new URLSearchParams();
+  if (params.month) query.set("month", params.month);
+  const suffix = query.toString();
+  const res = await request<{ attendance: HrAttendanceSummary; leave: HrLeaveSummary }>(
+    `/people/hr/me/attendance-summary${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function getMyHrPayrollRecords(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  return request<HrPayrollRecord[]>(`/people/hr/me/payroll-records${query ? `?${query}` : ""}`);
+}
+
+export async function getMyHrSalarySlip(recordId: string) {
+  const res = await request<HrPayrollRecord>(`/people/hr/me/payroll-records/${recordId}/salary-slip?format=json`);
+  return res.data;
+}
+
+export async function downloadMyHrSalarySlipPdf(recordId: string) {
+  return requestBlob(`/people/hr/me/payroll-records/${recordId}/salary-slip?format=pdf`);
+}

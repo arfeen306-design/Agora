@@ -54,6 +54,7 @@ describe("Sidebar role visibility", () => {
 
     expect(screen.getByText("Principal Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Access Control")).toBeInTheDocument();
+    expect(screen.getByText("HR & Payroll")).toBeInTheDocument();
     expect(screen.queryByText("Audit Logs")).not.toBeInTheDocument();
   });
 
@@ -90,5 +91,11 @@ describe("Sidebar role visibility", () => {
 
     expect(screen.getByText("Audit Logs")).toBeInTheDocument();
     expect(screen.getByText("Observability")).toBeInTheDocument();
+  });
+
+  test("teacher sees self-service HR link only for own finance view", () => {
+    render(<Sidebar />);
+    expect(screen.getByText("My HR & Finance")).toBeInTheDocument();
+    expect(screen.queryByText("HR & Payroll")).not.toBeInTheDocument();
   });
 });

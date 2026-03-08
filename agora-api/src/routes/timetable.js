@@ -223,6 +223,30 @@ function dayLabel(dayOfWeek) {
   return DAY_NAME_MAP[dayOfWeek] || "Unknown";
 }
 
+async function listHeadmistressSectionIds(schoolId, userId) {
+  if (!schoolId || !userId) return [];
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT ss.id
+      FROM school_sections ss
+      LEFT JOIN staff_profiles sp
+        ON sp.school_id = ss.school_id
+       AND sp.user_id = $2
+       AND sp.primary_section_id = ss.id
+      WHERE ss.school_id = $1
+        AND (
+          ss.head_user_id = $2
+          OR ss.coordinator_user_id = $2
+          OR sp.id IS NOT NULL
+        )
+    `,
+    [schoolId, userId]
+  );
+
+  return result.rows.map((row) => row.id);
+}
+
 async function resolveCurrentAcademicYearId(schoolId) {
   const row = await pool.query(
     `
@@ -288,6 +312,10 @@ async function ensureTeacherInSchool(schoolId, teacherId) {
       SELECT
         t.id,
         t.user_id,
+        u.is_active AS user_is_active,
+        sp.id AS staff_profile_id,
+        sp.staff_type,
+        sp.employment_status AS staff_employment_status,
         u.first_name,
         u.last_name,
         u.email
@@ -295,6 +323,9 @@ async function ensureTeacherInSchool(schoolId, teacherId) {
       JOIN users u
         ON u.id = t.user_id
        AND u.school_id = t.school_id
+      LEFT JOIN staff_profiles sp
+        ON sp.school_id = t.school_id
+       AND sp.user_id = t.user_id
       WHERE t.school_id = $1
         AND t.id = $2
       LIMIT 1
@@ -304,7 +335,21 @@ async function ensureTeacherInSchool(schoolId, teacherId) {
   if (!row.rows[0]) {
     throw new AppError(422, "VALIDATION_ERROR", "teacher_id must belong to this school");
   }
-  return row.rows[0];
+  const teacher = row.rows[0];
+  if (teacher.user_is_active !== true) {
+    throw new AppError(422, "VALIDATION_ERROR", "teacher_id must map to an active user");
+  }
+  if (
+    teacher.staff_profile_id &&
+    (teacher.staff_type !== "teacher" || teacher.staff_employment_status !== "active")
+  ) {
+    throw new AppError(
+      422,
+      "VALIDATION_ERROR",
+      "teacher_id must map to an active teacher staff profile"
+    );
+  }
+  return teacher;
 }
 
 async function ensureClassroomInSchool(schoolId, classroomId) {
@@ -467,20 +512,46 @@ async function ensureTeacherVisibleToRole({ auth, teacherId }) {
   if (isLeadership(auth)) return;
 
   if (hasRole(auth, "headmistress")) {
+    const sectionIds = await listHeadmistressSectionIds(auth.schoolId, auth.userId);
+    if (sectionIds.length === 0) {
+      throw new AppError(403, "FORBIDDEN", "Headmistress scope does not include this teacher");
+    }
+
     const visible = await pool.query(
       `
         SELECT t.id
         FROM teachers t
+        LEFT JOIN staff_profiles sp
+          ON sp.school_id = t.school_id
+         AND sp.user_id = t.user_id
         WHERE t.school_id = $1
           AND t.id = $2
           AND (
+            (
+              sp.id IS NOT NULL
+              AND (
+                sp.primary_section_id = ANY($3::uuid[])
+                OR EXISTS (
+                  SELECT 1
+                  FROM staff_classroom_assignments sca
+                  JOIN classrooms c
+                    ON c.id = sca.classroom_id
+                   AND c.school_id = sca.school_id
+                  WHERE sca.school_id = t.school_id
+                    AND sca.staff_profile_id = sp.id
+                    AND sca.is_active = TRUE
+                    AND sca.starts_on <= CURRENT_DATE
+                    AND (sca.ends_on IS NULL OR sca.ends_on >= CURRENT_DATE)
+                    AND c.section_id = ANY($3::uuid[])
+                )
+              )
+            )
+            OR
             EXISTS (
               SELECT 1
               FROM classrooms c
-              JOIN school_sections ss
-                ON ss.id = c.section_id
-               AND ss.school_id = c.school_id
               WHERE c.school_id = t.school_id
+                AND c.section_id = ANY($3::uuid[])
                 AND (
                   c.homeroom_teacher_id = t.id
                   OR EXISTS (
@@ -491,22 +562,11 @@ async function ensureTeacherVisibleToRole({ auth, teacherId }) {
                       AND cs.teacher_id = t.id
                   )
                 )
-                AND (
-                  ss.head_user_id = $3
-                  OR ss.coordinator_user_id = $3
-                  OR EXISTS (
-                    SELECT 1
-                    FROM staff_profiles sp
-                    WHERE sp.school_id = ss.school_id
-                      AND sp.user_id = $3
-                      AND sp.primary_section_id = ss.id
-                  )
-                )
             )
           )
         LIMIT 1
       `,
-      [auth.schoolId, teacherId, auth.userId]
+      [auth.schoolId, teacherId, sectionIds]
     );
     if (!visible.rows[0]) {
       throw new AppError(403, "FORBIDDEN", "Headmistress scope does not include this teacher");
@@ -1679,7 +1739,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const query = parseSchema(teacherLookupQuerySchema, req.query, "Invalid teacher lookup query");
     const params = [req.auth.schoolId];
-    const where = ["t.school_id = $1", "u.is_active = TRUE"];
+    const where = [
+      "sp.school_id = $1",
+      "sp.staff_type = 'teacher'",
+      "sp.employment_status = 'active'",
+      "u.is_active = TRUE",
+    ];
 
     if (query.search) {
       params.push(`%${query.search}%`);
@@ -1688,44 +1753,67 @@ router.get(
           u.first_name ILIKE $${params.length}
           OR COALESCE(u.last_name, '') ILIKE $${params.length}
           OR u.email ILIKE $${params.length}
-          OR t.employee_code ILIKE $${params.length}
+          OR sp.staff_code ILIKE $${params.length}
+          OR COALESCE(sp.designation, '') ILIKE $${params.length}
+          OR COALESCE(t.employee_code, '') ILIKE $${params.length}
         )
       `);
     }
 
     if (hasRole(req.auth, "headmistress") && !isLeadership(req.auth)) {
-      params.push(req.auth.userId);
+      const sectionIds = await listHeadmistressSectionIds(req.auth.schoolId, req.auth.userId);
+      if (sectionIds.length === 0) {
+        where.push("FALSE");
+      } else {
+        params.push(sectionIds);
       where.push(`
-        EXISTS (
-          SELECT 1
-          FROM classrooms c
-          LEFT JOIN school_sections ss
-            ON ss.id = c.section_id
-           AND ss.school_id = c.school_id
-          WHERE c.school_id = t.school_id
-            AND (
-              c.homeroom_teacher_id = t.id
-              OR EXISTS (
-                SELECT 1
-                FROM classroom_subjects cs
-                WHERE cs.school_id = c.school_id
-                  AND cs.classroom_id = c.id
-                  AND cs.teacher_id = t.id
-              )
-            )
-            AND (
-              ss.head_user_id = $${params.length}
-              OR ss.coordinator_user_id = $${params.length}
-              OR EXISTS (
-                SELECT 1
-                FROM staff_profiles sp
-                WHERE sp.school_id = ss.school_id
-                  AND sp.user_id = $${params.length}
-                  AND sp.primary_section_id = ss.id
-              )
-            )
+        (
+          sp.primary_section_id = ANY($${params.length}::uuid[])
+          OR EXISTS (
+            SELECT 1
+            FROM staff_classroom_assignments sca
+            JOIN classrooms c
+              ON c.id = sca.classroom_id
+             AND c.school_id = sca.school_id
+            WHERE sca.school_id = sp.school_id
+              AND sca.staff_profile_id = sp.id
+              AND sca.is_active = TRUE
+              AND sca.starts_on <= CURRENT_DATE
+              AND (sca.ends_on IS NULL OR sca.ends_on >= CURRENT_DATE)
+              AND c.section_id = ANY($${params.length}::uuid[])
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM teachers lt
+            JOIN classroom_subjects cs
+              ON cs.teacher_id = lt.id
+             AND cs.school_id = lt.school_id
+            JOIN classrooms c
+              ON c.id = cs.classroom_id
+             AND c.school_id = cs.school_id
+            LEFT JOIN school_sections ss
+              ON ss.id = c.section_id
+             AND ss.school_id = c.school_id
+            WHERE lt.school_id = sp.school_id
+              AND lt.user_id = sp.user_id
+              AND ss.id = ANY($${params.length}::uuid[])
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM teachers lt
+            JOIN classrooms c
+              ON c.homeroom_teacher_id = lt.id
+             AND c.school_id = lt.school_id
+            LEFT JOIN school_sections ss
+              ON ss.id = c.section_id
+             AND ss.school_id = c.school_id
+            WHERE lt.school_id = sp.school_id
+              AND lt.user_id = sp.user_id
+              AND ss.id = ANY($${params.length}::uuid[])
+          )
         )
       `);
+      }
     }
 
     if (hasRole(req.auth, "teacher") && !isLeadership(req.auth)) {
@@ -1733,21 +1821,24 @@ router.get(
         schoolId: req.auth.schoolId,
         userId: req.auth.userId,
       });
-      if (!teacherIdentity?.teacherId || !teacherIdentity.isActive) {
+      if (!teacherIdentity?.isActive) {
         where.push("FALSE");
       } else {
-        params.push(teacherIdentity.teacherId);
-        where.push(`t.id = $${params.length}`);
+        params.push(req.auth.userId);
+        where.push(`sp.user_id = $${params.length}`);
       }
     }
 
     const countResult = await pool.query(
       `
         SELECT COUNT(*)::int AS total
-        FROM teachers t
+        FROM staff_profiles sp
         JOIN users u
-          ON u.id = t.user_id
-         AND u.school_id = t.school_id
+          ON u.id = sp.user_id
+         AND u.school_id = sp.school_id
+        LEFT JOIN teachers t
+          ON t.user_id = sp.user_id
+         AND t.school_id = sp.school_id
         WHERE ${where.join(" AND ")}
       `,
       params
@@ -1760,17 +1851,22 @@ router.get(
     const rows = await pool.query(
       `
         SELECT
-          t.id,
-          t.user_id,
-          t.employee_code,
-          t.designation,
+          t.id AS teacher_id,
+          sp.id AS staff_profile_id,
+          sp.user_id,
+          sp.staff_code,
+          COALESCE(t.employee_code, sp.staff_code) AS employee_code,
+          COALESCE(sp.designation, t.designation) AS designation,
           u.first_name,
           u.last_name,
           u.email
-        FROM teachers t
+        FROM staff_profiles sp
         JOIN users u
-          ON u.id = t.user_id
-         AND u.school_id = t.school_id
+          ON u.id = sp.user_id
+         AND u.school_id = sp.school_id
+        LEFT JOIN teachers t
+          ON t.user_id = sp.user_id
+         AND t.school_id = sp.school_id
         WHERE ${where.join(" AND ")}
         ORDER BY u.first_name ASC, u.last_name ASC NULLS LAST
         LIMIT $${listParams.length - 1}
@@ -1779,12 +1875,38 @@ router.get(
       listParams
     );
 
+    const mappedTeachers = await Promise.all(
+      rows.rows.map(async (row) => {
+        let teacherId = row.teacher_id;
+        if (!teacherId) {
+          const projection = await ensureTeacherProjectionForUser({
+            schoolId: req.auth.schoolId,
+            userId: row.user_id,
+            roles: ["teacher"],
+          });
+          teacherId = projection?.id || null;
+        }
+
+        if (!teacherId) return null;
+
+        return {
+          id: teacherId,
+          user_id: row.user_id,
+          staff_profile_id: row.staff_profile_id,
+          staff_code: row.staff_code,
+          employee_code: row.employee_code,
+          designation: row.designation,
+          first_name: row.first_name,
+          last_name: row.last_name,
+          email: row.email,
+          label: `${row.first_name} ${row.last_name || ""}`.trim(),
+        };
+      })
+    );
+
     return success(
       res,
-      rows.rows.map((row) => ({
-        ...row,
-        label: `${row.first_name} ${row.last_name || ""}`.trim(),
-      })),
+      mappedTeachers.filter(Boolean),
       200,
       {
         pagination: {

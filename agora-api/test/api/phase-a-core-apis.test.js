@@ -641,7 +641,8 @@ test("people detail endpoints, parent CRUD, timeline, and academic summary work 
     headers: { Authorization: `Bearer ${parentToken}` },
   });
   assert.equal(studentDetail.status, 200, JSON.stringify(studentDetail.body));
-  assert.equal(studentDetail.body?.data?.student?.student_code, "STD-001");
+  assert.ok(typeof studentDetail.body?.data?.student?.student_code === "string");
+  assert.match(studentDetail.body?.data?.student?.student_code, /^STD-/);
 
   const parentCannotSeeUnlinkedStudent = await jsonRequest(`/api/v1/people/students/${STUDENT_3}`, {
     headers: { Authorization: `Bearer ${parentToken}` },

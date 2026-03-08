@@ -20,6 +20,7 @@ const importsRouter = require("./imports");
 const admissionsRouter = require("./admissions");
 const timetableRouter = require("./timetable");
 const disciplineRouter = require("./discipline");
+const hrRouter = require("./hr");
 
 const router = express.Router();
 
@@ -44,5 +45,6 @@ router.use(importsRouter);
 router.use(admissionsRouter);
 router.use(timetableRouter);
 router.use(disciplineRouter);
+router.use(hrRouter);
 
 module.exports = router;

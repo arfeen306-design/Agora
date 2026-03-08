@@ -27,6 +27,7 @@ export default function DashboardPage() {
   const isLeadership = user?.roles?.includes("principal") || user?.roles?.includes("vice_principal");
   const isSectionLeadership = user?.roles?.includes("headmistress");
   const isFrontDesk = user?.roles?.includes("front_desk");
+  const isHrAdmin = user?.roles?.includes("hr_admin");
 
   useEffect(() => {
     if (isLeadership) {
@@ -39,11 +40,15 @@ export default function DashboardPage() {
     }
     if (isFrontDesk) {
       router.replace("/dashboard/admissions");
+      return;
     }
-  }, [isFrontDesk, isLeadership, isSectionLeadership, router]);
+    if (isHrAdmin) {
+      router.replace("/dashboard/hr");
+    }
+  }, [isFrontDesk, isHrAdmin, isLeadership, isSectionLeadership, router]);
 
   useEffect(() => {
-    if (isLeadership || isSectionLeadership || isFrontDesk) {
+    if (isLeadership || isSectionLeadership || isFrontDesk || isHrAdmin) {
       setLoading(false);
       return;
     }
@@ -83,9 +88,9 @@ export default function DashboardPage() {
       }
     }
     loadStats();
-  }, [isFrontDesk, isLeadership, isSectionLeadership]);
+  }, [isFrontDesk, isHrAdmin, isLeadership, isSectionLeadership]);
 
-  if (isLeadership || isSectionLeadership || isFrontDesk) {
+  if (isLeadership || isSectionLeadership || isFrontDesk || isHrAdmin) {
     return (
       <>
         <Header title="Dashboard" />
@@ -97,7 +102,9 @@ export default function DashboardPage() {
                 ? "Opening Principal Dashboard..."
                 : isSectionLeadership
                   ? "Opening Section Dashboard..."
-                  : "Opening Admissions Dashboard..."}
+                  : isFrontDesk
+                    ? "Opening Admissions Dashboard..."
+                    : "Opening HR Dashboard..."}
             </p>
           </div>
         </div>

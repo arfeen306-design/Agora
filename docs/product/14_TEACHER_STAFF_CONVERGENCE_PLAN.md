@@ -2,7 +2,7 @@
 
 > Scope: Phase 1 closeout item #1  
 > Date: 2026-03-08  
-> Status: In progress (Phase 1 implementation shipped, DB FK migration deferred by design)
+> Status: In progress (Phase 2 route convergence extended, DB FK migration deferred by design)
 
 ## Problem
 
@@ -63,13 +63,25 @@ Changes include:
 - Homework create path resolves teacher projection through shared identity utility.
 - Reports teacher scope now uses centralized classroom scope in role filtering.
 
+### Phase 2 closeout extension (current)
+
+- `agora-api/src/routes/timetable.js`
+- `agora-api/src/routes/institution.js`
+
+Updates:
+
+- Headmistress teacher-visibility checks in timetable now resolve section scope first and apply staff-profile-based filters before compatibility fallback.
+- Timetable teacher directory route now uses headmistress section-id scoping in one shared shape and keeps legacy teacher joins only as fallback compatibility.
+- Timetable `ensureTeacherInSchool` now validates active user and active teacher staff profile when present, preventing inactive teacher assignment.
+- Institution classroom list response now surfaces canonical homeroom staff identity (`homeroom_teacher_staff_profile_id`, `homeroom_teacher_staff_code`) while preserving legacy `homeroom_teacher_id`.
+
 ## What remains for full convergence
 
 1. Migrate remaining legacy joins in:
-   - `agora-api/src/routes/people.js`
-   - `agora-api/src/routes/discipline.js`
-   - `agora-api/src/routes/timetable.js`
-   - `agora-api/src/routes/institution.js` (read-side teacher labels)
+   - `agora-api/src/routes/people.js` (teacher projection cleanup in list-only joins)
+   - `agora-api/src/routes/discipline.js` (legacy joins retained for compatibility; staff-first read path pending)
+   - `agora-api/src/routes/timetable.js` (schema-level `teacher_id` FK still points to legacy table)
+   - `agora-api/src/routes/institution.js` (homeroom FK remains legacy; read side mostly converged)
 2. Add migration path for FK replacement:
    - `classrooms.homeroom_teacher_id`
    - `classroom_subjects.teacher_id`

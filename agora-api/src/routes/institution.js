@@ -700,6 +700,9 @@ router.get(
           tu.id AS homeroom_teacher_user_id,
           tu.first_name AS homeroom_teacher_first_name,
           tu.last_name AS homeroom_teacher_last_name,
+          hsp.id AS homeroom_teacher_staff_profile_id,
+          hsp.staff_code AS homeroom_teacher_staff_code,
+          COALESCE(hsp.designation, ht.designation) AS homeroom_teacher_designation,
           (
             SELECT COUNT(*)::int
             FROM student_enrollments se
@@ -719,6 +722,9 @@ router.get(
          AND ht.school_id = c.school_id
         LEFT JOIN users tu
           ON tu.id = ht.user_id
+        LEFT JOIN staff_profiles hsp
+          ON hsp.user_id = ht.user_id
+         AND hsp.school_id = c.school_id
         WHERE ${where.join(" AND ")}
         ORDER BY ay.is_current DESC, c.grade_label ASC, c.section_label ASC
         LIMIT $${listParams.length - 1}

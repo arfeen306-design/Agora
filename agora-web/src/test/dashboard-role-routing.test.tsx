@@ -100,6 +100,24 @@ describe("Role-aware dashboard routing", () => {
     expect(screen.getByText("Opening Admissions Dashboard...")).toBeInTheDocument();
   });
 
+  test("hr admin users are redirected to hr dashboard", async () => {
+    mockUseAuth.mockReturnValue({
+      user: {
+        first_name: "HR",
+        last_name: "Admin",
+        roles: ["hr_admin"],
+      },
+      isAdmin: false,
+    });
+
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/dashboard/hr");
+    });
+    expect(screen.getByText("Opening HR Dashboard...")).toBeInTheDocument();
+  });
+
   test("school admin stays on default dashboard shell", async () => {
     mockUseAuth.mockReturnValue({
       user: {

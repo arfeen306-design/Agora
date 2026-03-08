@@ -15,6 +15,7 @@ const SCHOOL_ID = "10000000-0000-0000-0000-000000000001";
 const CLASSROOM_ID = "60000000-0000-0000-0000-000000000001";
 const SUBJECT_ID = "70000000-0000-0000-0000-000000000001";
 const STUDENT_ID = "40000000-0000-0000-0000-000000000001";
+const PARENT_FIXTURE_EMAIL = "parent.fixture.convergence@agora.com";
 
 async function jsonRequest(pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, options);
@@ -148,11 +149,143 @@ async function seedTeacherWithStaffAssignment({ email, inactive = false }) {
   return { userId, email, password };
 }
 
+async function ensureScopedStudentAndParentFixtures() {
+  const academicYear = await pool.query(
+    `
+      SELECT id
+      FROM academic_years
+      WHERE school_id = $1
+      ORDER BY is_current DESC, starts_on DESC, created_at DESC
+      LIMIT 1
+    `,
+    [SCHOOL_ID]
+  );
+  const academicYearId = academicYear.rows[0]?.id;
+  assert.ok(academicYearId, "Expected a current academic year fixture");
+
+  await pool.query(
+    `
+      INSERT INTO students (
+        id,
+        school_id,
+        student_code,
+        first_name,
+        last_name,
+        admission_date,
+        status,
+        admission_status
+      )
+      VALUES ($1, $2, 'STD-CNV-001', 'Convergence', 'Student', CURRENT_DATE, 'active', 'admitted')
+      ON CONFLICT (id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        admission_status = EXCLUDED.admission_status
+    `,
+    [STUDENT_ID, SCHOOL_ID]
+  );
+
+  await pool.query(
+    `
+      INSERT INTO student_enrollments (
+        school_id,
+        student_id,
+        classroom_id,
+        academic_year_id,
+        roll_no,
+        status,
+        joined_on
+      )
+      VALUES ($1, $2, $3, $4, 1, 'active', CURRENT_DATE)
+      ON CONFLICT (school_id, student_id, academic_year_id)
+      DO UPDATE SET
+        classroom_id = EXCLUDED.classroom_id,
+        status = EXCLUDED.status,
+        joined_on = EXCLUDED.joined_on
+    `,
+    [SCHOOL_ID, STUDENT_ID, CLASSROOM_ID, academicYearId]
+  );
+
+  const parentUser = await pool.query(
+    `
+      INSERT INTO users (
+        school_id,
+        email,
+        phone,
+        password_hash,
+        first_name,
+        last_name,
+        is_active
+      )
+      VALUES ($1, $2, '+920000001111', 'pass123', 'Parent', 'Fixture', TRUE)
+      ON CONFLICT (school_id, email)
+      DO UPDATE SET
+        is_active = EXCLUDED.is_active
+      RETURNING id
+    `,
+    [SCHOOL_ID, PARENT_FIXTURE_EMAIL]
+  );
+  const parentUserId = parentUser.rows[0]?.id;
+  assert.ok(parentUserId, "Expected parent fixture user");
+
+  await pool.query(
+    `
+      INSERT INTO user_roles (user_id, role_id)
+      SELECT $1, r.id
+      FROM roles r
+      WHERE r.code = 'parent'
+      ON CONFLICT DO NOTHING
+    `,
+    [parentUserId]
+  );
+
+  const parentRecord = await pool.query(
+    `
+      INSERT INTO parents (
+        school_id,
+        user_id,
+        guardian_name,
+        father_name,
+        whatsapp_number,
+        preferred_channel
+      )
+      VALUES ($1, $2, 'Parent Fixture', 'Parent Fixture', '+920000001111', 'in_app')
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        guardian_name = EXCLUDED.guardian_name,
+        father_name = EXCLUDED.father_name
+      RETURNING id
+    `,
+    [SCHOOL_ID, parentUserId]
+  );
+
+  const parentId = parentRecord.rows[0]?.id;
+  assert.ok(parentId, "Expected parent fixture profile");
+
+  await pool.query(
+    `
+      INSERT INTO parent_students (
+        school_id,
+        parent_id,
+        student_id,
+        relation_type,
+        is_primary
+      )
+      VALUES ($1, $2, $3, 'guardian', TRUE)
+      ON CONFLICT (parent_id, student_id)
+      DO UPDATE SET
+        relation_type = EXCLUDED.relation_type,
+        is_primary = EXCLUDED.is_primary
+    `,
+    [SCHOOL_ID, parentId, STUDENT_ID]
+  );
+}
+
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
   await runSqlFile("database/migrations/20260308_discipline_foundation.sql");
   await runSqlFile("database/migrations/20260308_timetable_foundation.sql");
+  await ensureScopedStudentAndParentFixtures();
 
   server = http.createServer(app);
   await new Promise((resolve) => {
@@ -227,12 +360,15 @@ test("teacher with active staff assignment can read scoped students and parents 
   });
   const token = await login(account.email, account.password);
 
-  const studentsResponse = await jsonRequest("/api/v1/people/students?page=1&page_size=20", {
+  const studentsResponse = await jsonRequest(
+    `/api/v1/people/students?page=1&page_size=100&classroom_id=${CLASSROOM_ID}`,
+    {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
     },
-  });
+    }
+  );
 
   assert.equal(studentsResponse.status, 200, JSON.stringify(studentsResponse.body));
   assert.equal(studentsResponse.body?.success, true);
@@ -242,18 +378,24 @@ test("teacher with active staff assignment can read scoped students and parents 
     "Expected in-scope student to appear in teacher list"
   );
 
-  const parentsResponse = await jsonRequest("/api/v1/people/parents?page=1&page_size=20", {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const parentsResponse = await jsonRequest(
+    `/api/v1/people/parents?page=1&page_size=50&search=${encodeURIComponent(PARENT_FIXTURE_EMAIL)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
 
   assert.equal(parentsResponse.status, 200, JSON.stringify(parentsResponse.body));
   assert.equal(parentsResponse.body?.success, true);
   assert.ok(
-    Array.isArray(parentsResponse.body?.data) && parentsResponse.body.data.length > 0,
-    "Expected at least one linked parent record in teacher scope"
+    Array.isArray(parentsResponse.body?.data) &&
+      parentsResponse.body.data.some(
+        (row) => String(row.email || "").toLowerCase() === PARENT_FIXTURE_EMAIL
+      ),
+    "Expected linked parent fixture to appear in teacher parent scope"
   );
 });
 

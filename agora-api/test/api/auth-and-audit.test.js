@@ -11,6 +11,7 @@ let baseUrl;
 const deviceApiKey = process.env.ATTENDANCE_DEVICE_API_KEY || "dev-device-key";
 const internalApiKey = process.env.INTERNAL_API_KEY || "dev-internal-key";
 const SCHOOL_ID = "10000000-0000-0000-0000-000000000001";
+const STUDENT_1 = "40000000-0000-0000-0000-000000000001";
 
 async function jsonRequest(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
@@ -77,6 +78,20 @@ async function getUserIdByEmail(email) {
     [SCHOOL_ID, email]
   );
   return result.rows[0]?.id || null;
+}
+
+async function getStudentCodeById(studentId) {
+  const result = await pool.query(
+    `
+      SELECT student_code
+      FROM students
+      WHERE school_id = $1
+        AND id = $2
+      LIMIT 1
+    `,
+    [SCHOOL_ID, studentId]
+  );
+  return result.rows[0]?.student_code || null;
 }
 
 async function waitForAuditAction(action, actorUserId, attempts = 20) {
@@ -351,6 +366,9 @@ test("write requests are logged and audit export works", async () => {
 });
 
 test("device ingest creates/updates attendance with API key auth", async () => {
+  const studentCode = await getStudentCodeById(STUDENT_1);
+  assert.ok(studentCode, "Expected seed student to exist for device ingest test");
+
   const denied = await jsonRequest("/api/v1/attendance/device-ingest", {
     method: "POST",
     headers: {
@@ -358,7 +376,7 @@ test("device ingest creates/updates attendance with API key auth", async () => {
     },
     body: JSON.stringify({
       school_code: "agora_demo",
-      student_code: "STD-001",
+      student_code: studentCode,
       source: "rfid",
       scanner_id: "gate-a",
     }),
@@ -373,7 +391,7 @@ test("device ingest creates/updates attendance with API key auth", async () => {
     },
     body: JSON.stringify({
       school_code: "agora_demo",
-      student_code: "STD-001",
+      student_code: studentCode,
       source: "rfid",
       scanner_id: "gate-a",
       scanned_at: "2026-03-10T02:00:00Z",

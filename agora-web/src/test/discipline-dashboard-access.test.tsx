@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import DisciplineDashboardPage from "@/app/dashboard/discipline/page";
@@ -99,6 +99,7 @@ describe("Discipline dashboard access", () => {
 
     expect(screen.getByText(/Behavior and Pastoral Oversight/i)).toBeInTheDocument();
     expect(screen.getByText(/Zain Khan/i)).toBeInTheDocument();
-    expect(screen.getByText(/minor infraction/i)).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(within(table).getByText(/minor infraction/i)).toBeInTheDocument();
   });
 });
