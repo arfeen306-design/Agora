@@ -15,6 +15,8 @@ const mockGetLookupSections = vi.fn();
 const mockGetPeopleParent = vi.fn();
 const mockUpdatePeopleParent = vi.fn();
 const mockGetFeeInvoices = vi.fn();
+const mockGetDocuments = vi.fn();
+const mockIssueDocumentDownloadUrl = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   useAuth: () => mockUseAuth(),
@@ -33,6 +35,8 @@ vi.mock("@/lib/api", () => ({
   getPeopleParent: (...args: unknown[]) => mockGetPeopleParent(...args),
   updatePeopleParent: (...args: unknown[]) => mockUpdatePeopleParent(...args),
   getFeeInvoices: (...args: unknown[]) => mockGetFeeInvoices(...args),
+  getDocuments: (...args: unknown[]) => mockGetDocuments(...args),
+  issueDocumentDownloadUrl: (...args: unknown[]) => mockIssueDocumentDownloadUrl(...args),
 }));
 
 describe("Parent pages access", () => {
@@ -46,6 +50,8 @@ describe("Parent pages access", () => {
     mockGetPeopleParent.mockReset();
     mockUpdatePeopleParent.mockReset();
     mockGetFeeInvoices.mockReset();
+    mockGetDocuments.mockReset();
+    mockIssueDocumentDownloadUrl.mockReset();
 
     mockUseAuth.mockReturnValue({
       user: {
@@ -61,6 +67,7 @@ describe("Parent pages access", () => {
       logout: vi.fn(),
       refreshUser: vi.fn(),
     });
+    mockGetDocuments.mockResolvedValue({ data: [] });
   });
 
   test("parent directory is blocked for student role", () => {
@@ -209,5 +216,6 @@ describe("Parent pages access", () => {
     expect(parentNames.length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linked Children").length).toBeGreaterThan(0);
     expect(screen.getByText("Zain Khan")).toBeInTheDocument();
+    expect(screen.getByText("Parent Documents")).toBeInTheDocument();
   });
 });

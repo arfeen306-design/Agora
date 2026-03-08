@@ -11,9 +11,12 @@ import { useAuth } from "@/lib/auth";
 import {
   ApiError,
   admitAdmissionApplicant,
+  getAdmissionDocuments,
   getAdmissionApplication,
   getLookupAcademicYears,
   getLookupClassrooms,
+  issueDocumentDownloadUrl,
+  type DocumentVaultItem,
   updateAdmissionStage,
   type AdmissionApplicationDetail,
   type AdmissionStatus,
@@ -66,6 +69,7 @@ export default function ApplicantDetailPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [detail, setDetail] = useState<AdmissionApplicationDetail | null>(null);
+  const [admissionDocuments, setAdmissionDocuments] = useState<DocumentVaultItem[]>([]);
   const [classrooms, setClassrooms] = useState<Array<{ id: string; label: string }>>([]);
   const [academicYears, setAcademicYears] = useState<Array<{ id: string; label: string; is_current: boolean }>>([]);
   const [stageForm, setStageForm] = useState<{ new_status: AdmissionStatus; notes: string }>({
@@ -109,10 +113,23 @@ export default function ApplicantDetailPage() {
           classroom_id: detailData.application.desired_classroom_id || prev.classroom_id || "",
           academic_year_id: detailData.application.desired_academic_year_id || prev.academic_year_id || "",
         }));
+
+        const applicationId = detailData.application.application_id;
+        if (applicationId) {
+          try {
+            const docsRes = await getAdmissionDocuments(applicationId, { page: 1, page_size: 20 });
+            setAdmissionDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
+          } catch {
+            setAdmissionDocuments([]);
+          }
+        } else {
+          setAdmissionDocuments([]);
+        }
       } catch (err: unknown) {
         if (cancelled) return;
         setError(errorMessage(err, "Failed to load applicant details"));
         setDetail(null);
+        setAdmissionDocuments([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -125,6 +142,7 @@ export default function ApplicantDetailPage() {
   }, [canView, studentId]);
 
   const currentStatus = detail?.application.current_status || "inquiry";
+  const admissionApplicationId = detail?.application.application_id || "";
   const stageOptions = useMemo(() => nextStageChoices(currentStatus), [currentStatus]);
   const stageProgress = useMemo(() => {
     const idx = ADMISSION_STAGE_ORDER.indexOf(currentStatus);
@@ -176,6 +194,18 @@ export default function ApplicantDetailPage() {
       setError(errorMessage(err, "Failed to admit applicant"));
     } finally {
       setSavingAdmit(false);
+    }
+  }
+
+  async function handleDocumentDownload(documentId: string) {
+    setError("");
+    try {
+      const payload = await issueDocumentDownloadUrl(documentId);
+      if (payload.download?.url) {
+        window.open(payload.download.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to generate document download URL"));
     }
   }
 
@@ -283,6 +313,55 @@ export default function ApplicantDetailPage() {
                       </p>
                       <p className="text-xs text-gray-500">{formatDateTime(event.created_at)}</p>
                       {event.notes && <p className="mt-1 text-sm text-gray-700">{event.notes}</p>}
+                    </div>
+                  ))
+                )}
+              </div>
+            </article>
+
+            <article className="rounded-xl border border-sky-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-lg font-semibold text-gray-900">Admission Documents</h3>
+                {admissionApplicationId ? (
+                  <Link
+                    href={`/dashboard/documents?scope_type=admission&scope_id=${admissionApplicationId}`}
+                    className="btn-secondary"
+                  >
+                    Open Vault
+                  </Link>
+                ) : (
+                  <span className="text-xs font-medium text-gray-500">Admission record ID unavailable.</span>
+                )}
+              </div>
+              <p className="mt-1 text-sm text-gray-500">
+                Identity files, admission forms, certificates, and supporting records for this applicant.
+              </p>
+              <div className="mt-4 space-y-2">
+                {admissionDocuments.length === 0 ? (
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
+                    No admission documents linked yet.
+                  </p>
+                ) : (
+                  admissionDocuments.slice(0, 12).map((doc) => (
+                    <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800">{doc.title}</p>
+                        <p className="text-xs text-gray-500">
+                          {doc.category.replaceAll("_", " ")} • {new Date(doc.updated_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Link href={`/dashboard/documents/${doc.id}`} className="btn-secondary">
+                          View
+                        </Link>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => handleDocumentDownload(doc.id)}
+                        >
+                          Download
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}

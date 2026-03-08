@@ -55,6 +55,27 @@ const DOCUMENT_CATEGORIES = [
 
 const DOCUMENT_SCOPE_TYPES = ["school", "student", "staff", "classroom", "parent", "admission", "finance"];
 
+const CATEGORY_SCOPE_RULES = Object.freeze({
+  hr_document: ["staff", "school"],
+  salary_slip: ["staff", "finance"],
+  appointment_letter: ["staff"],
+  contract: ["staff"],
+  policy_document: ["school", "staff"],
+  circular: ["school", "classroom"],
+  student_document: ["student", "classroom"],
+  admission_form: ["admission", "student", "parent"],
+  report_card: ["student"],
+  fee_receipt: ["finance", "student", "parent"],
+  certificate: ["student", "admission"],
+  identity_document: ["student", "staff", "parent", "admission"],
+  medical_record: ["student"],
+  official_letter: ["school", "staff", "student", "parent", "admission", "finance"],
+  other: ["school", "student", "staff", "classroom", "parent", "admission", "finance"],
+});
+
+const EXPIRY_REPORT_ROLES = ["school_admin", "principal", "vice_principal", "hr_admin", "accountant", "front_desk"];
+const DOWNLOAD_REPORT_ROLES = ["school_admin", "principal", "vice_principal", "hr_admin", "accountant", "front_desk"];
+
 const listDocumentsQuerySchema = z.object({
   search: z.string().trim().min(1).max(120).optional(),
   category: z.enum(DOCUMENT_CATEGORIES).optional(),
@@ -144,8 +165,42 @@ const studentPathSchema = z.object({
   studentId: z.string().uuid(),
 });
 
+const staffPathSchema = z.object({
+  staffId: z.string().uuid(),
+});
+
+const admissionPathSchema = z.object({
+  applicationId: z.string().uuid(),
+});
+
+const financePathSchema = z.object({
+  financeId: z.string().uuid(),
+});
+
 const studentDocumentsQuerySchema = z.object({
   include_archived: z.coerce.boolean().default(false),
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const expiryReportQuerySchema = z.object({
+  status: z.enum(["all", "expired", "expiring", "active"]).default("all"),
+  within_days: z.coerce.number().int().min(1).max(365).default(30),
+  category: z.enum(DOCUMENT_CATEGORIES).optional(),
+  scope_type: z.enum(DOCUMENT_SCOPE_TYPES).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const downloadReportQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(365).default(30),
+  category: z.enum(DOCUMENT_CATEGORIES).optional(),
+  scope_type: z.enum(DOCUMENT_SCOPE_TYPES).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const documentDownloadEventsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   page_size: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -204,6 +259,21 @@ function normalizeScopeId(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function assertCategoryScopeCompatibility({ category, scopeType }) {
+  const allowedScopes = CATEGORY_SCOPE_RULES[category];
+  if (!allowedScopes) {
+    throw new AppError(422, "VALIDATION_ERROR", "Unsupported document category");
+  }
+  if (!allowedScopes.includes(scopeType)) {
+    throw new AppError(
+      422,
+      "VALIDATION_ERROR",
+      `Category ${category} is not allowed for scope_type ${scopeType}`,
+      [{ field: "scope_type", issue: "scope_type does not match category rules" }]
+    );
+  }
+}
+
 function assertFileKeyBelongsToSchool(fileKey, schoolId) {
   const expectedPrefix = `${schoolId}/`;
   if (!String(fileKey).startsWith(expectedPrefix)) {
@@ -214,6 +284,21 @@ function assertFileKeyBelongsToSchool(fileKey, schoolId) {
 function getBaseUrl(req) {
   if (config.storage.publicBaseUrl) return config.storage.publicBaseUrl;
   return `${req.protocol}://${req.get("host")}`;
+}
+
+const TABLE_EXISTS_CACHE = new Map();
+
+async function doesTableExist(tableName, client = null) {
+  const db = client || pool;
+  if (!client && TABLE_EXISTS_CACHE.has(tableName)) {
+    return TABLE_EXISTS_CACHE.get(tableName);
+  }
+  const result = await db.query(`SELECT to_regclass($1) IS NOT NULL AS table_exists`, [`public.${tableName}`]);
+  const tableExists = Boolean(result.rows[0]?.table_exists);
+  if (!client) {
+    TABLE_EXISTS_CACHE.set(tableName, tableExists);
+  }
+  return tableExists;
 }
 
 async function ensureScopeEntityExists({ schoolId, scopeType, scopeId, client }) {
@@ -263,6 +348,69 @@ async function ensureScopeEntityExists({ schoolId, scopeType, scopeId, client })
     }
     return;
   }
+
+  if (scopeType === "admission") {
+    if (!(await doesTableExist("admission_applications", client))) {
+      throw new AppError(422, "VALIDATION_ERROR", "Admission module is not initialized for admission-scoped documents");
+    }
+    const row = await db.query(
+      `SELECT id FROM admission_applications WHERE school_id = $1 AND id = $2 LIMIT 1`,
+      [schoolId, scopeId]
+    );
+    if (!row.rows[0]) {
+      throw new AppError(422, "VALIDATION_ERROR", "scope_id admission application not found in this school");
+    }
+    return;
+  }
+
+  if (scopeType === "finance") {
+    const [hasFeeInvoices, hasFeePlans, hasFeePayments, hasPayrollRecords] = await Promise.all([
+      doesTableExist("fee_invoices", client),
+      doesTableExist("fee_plans", client),
+      doesTableExist("fee_payments", client),
+      doesTableExist("payroll_records", client),
+    ]);
+
+    if (!hasFeeInvoices && !hasFeePlans && !hasFeePayments && !hasPayrollRecords) {
+      throw new AppError(422, "VALIDATION_ERROR", "Finance module is not initialized for finance-scoped documents");
+    }
+
+    if (hasFeeInvoices) {
+      const row = await db.query(`SELECT id FROM fee_invoices WHERE school_id = $1 AND id = $2 LIMIT 1`, [
+        schoolId,
+        scopeId,
+      ]);
+      if (row.rows[0]) return;
+    }
+
+    if (hasFeePlans) {
+      const row = await db.query(`SELECT id FROM fee_plans WHERE school_id = $1 AND id = $2 LIMIT 1`, [
+        schoolId,
+        scopeId,
+      ]);
+      if (row.rows[0]) return;
+    }
+
+    if (hasFeePayments) {
+      const row = await db.query(`SELECT id FROM fee_payments WHERE school_id = $1 AND id = $2 LIMIT 1`, [
+        schoolId,
+        scopeId,
+      ]);
+      if (row.rows[0]) return;
+    }
+
+    if (hasPayrollRecords) {
+      const row = await db.query(`SELECT id FROM payroll_records WHERE school_id = $1 AND id = $2 LIMIT 1`, [
+        schoolId,
+        scopeId,
+      ]);
+      if (row.rows[0]) return;
+    }
+
+    throw new AppError(422, "VALIDATION_ERROR", "scope_id finance owner not found in this school");
+  }
+
+  throw new AppError(422, "VALIDATION_ERROR", `Unsupported scope_type: ${scopeType}`);
 }
 
 async function getParentLinkedStudentIds({ schoolId, userId, client = null }) {
@@ -830,6 +978,88 @@ async function replaceDocumentAccessRules({ client, schoolId, documentId, rules 
   }
 }
 
+async function buildDocumentListPayload({ where, params, page, pageSize }) {
+  const countResult = await pool.query(
+    `
+      SELECT COUNT(*)::int AS total
+      FROM documents d
+      WHERE ${where.join(" AND ")}
+    `,
+    params
+  );
+
+  const totalItems = Number(countResult.rows[0]?.total || 0);
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const offset = (page - 1) * pageSize;
+
+  const listParams = [...params, pageSize, offset];
+  const rows = await pool.query(
+    `
+      SELECT
+        d.*,
+        u.first_name AS uploaded_by_first_name,
+        u.last_name AS uploaded_by_last_name,
+        (
+          SELECT COUNT(*)::int
+          FROM document_versions dv
+          WHERE dv.school_id = d.school_id
+            AND dv.document_id = d.id
+        ) AS versions_count,
+        (
+          SELECT COUNT(*)::int
+          FROM document_download_events dde
+          WHERE dde.school_id = d.school_id
+            AND dde.document_id = d.id
+        ) AS downloads_count
+      FROM documents d
+      LEFT JOIN users u
+        ON u.id = d.uploaded_by_user_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY d.updated_at DESC, d.created_at DESC
+      LIMIT $${listParams.length - 1}
+      OFFSET $${listParams.length}
+    `,
+    listParams
+  );
+
+  return {
+    rows: rows.rows,
+    pagination: {
+      page,
+      page_size: pageSize,
+      total_items: totalItems,
+      total_pages: totalPages,
+    },
+  };
+}
+
+async function respondWithExactScopeDocuments({ req, res, scopeType, scopeId, query, context }) {
+  const where = ["d.school_id = $1", "d.scope_type = $2", "d.scope_id = $3::uuid"];
+  const params = [req.auth.schoolId, scopeType, scopeId];
+
+  if (!query.include_archived) {
+    where.push("d.is_archived = FALSE");
+  }
+
+  applyRoleScopedWhere({
+    auth: req.auth,
+    where,
+    params,
+    context,
+  });
+
+  const result = await buildDocumentListPayload({
+    where,
+    params,
+    page: query.page,
+    pageSize: query.page_size,
+  });
+
+  return success(res, result.rows, 200, {
+    pagination: result.pagination,
+  });
+}
+
 router.get(
   "/documents/categories",
   requireAuth,
@@ -840,6 +1070,7 @@ router.get(
       DOCUMENT_CATEGORIES.map((category) => ({
         code: category,
         label: category.replace(/_/g, " "),
+        allowed_scope_types: CATEGORY_SCOPE_RULES[category] || [],
       }))
     );
   })
@@ -945,6 +1176,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const body = parseSchema(createDocumentSchema, req.body, "Invalid document payload");
     const scopeId = normalizeScopeId(body.scope_id);
+    assertCategoryScopeCompatibility({ category: body.category, scopeType: body.scope_type });
     assertFileKeyBelongsToSchool(body.file_key, req.auth.schoolId);
 
     await ensureScopeEntityExists({
@@ -1085,15 +1317,236 @@ router.get(
       context,
     });
 
+    return respondWithExactScopeDocuments({
+      req,
+      res,
+      scopeType: "student",
+      scopeId: path.studentId,
+      query,
+      context,
+    });
+  })
+);
+
+router.get(
+  "/documents/staff/:staffId",
+  requireAuth,
+  requireRoles("school_admin", "principal", "vice_principal", "hr_admin", "accountant"),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(staffPathSchema, req.params, "Invalid staff id");
+    const query = parseSchema(studentDocumentsQuerySchema, req.query, "Invalid staff documents query");
+    const context = await getScopeContext(req.auth);
+
+    await ensureScopeEntityExists({
+      schoolId: req.auth.schoolId,
+      scopeType: "staff",
+      scopeId: path.staffId,
+    });
+
+    return respondWithExactScopeDocuments({
+      req,
+      res,
+      scopeType: "staff",
+      scopeId: path.staffId,
+      query,
+      context,
+    });
+  })
+);
+
+router.get(
+  "/documents/admission/:applicationId",
+  requireAuth,
+  requireRoles("school_admin", "principal", "vice_principal", "front_desk"),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(admissionPathSchema, req.params, "Invalid admission application id");
+    const query = parseSchema(studentDocumentsQuerySchema, req.query, "Invalid admission documents query");
+    const context = await getScopeContext(req.auth);
+
+    await ensureScopeEntityExists({
+      schoolId: req.auth.schoolId,
+      scopeType: "admission",
+      scopeId: path.applicationId,
+    });
+
+    return respondWithExactScopeDocuments({
+      req,
+      res,
+      scopeType: "admission",
+      scopeId: path.applicationId,
+      query,
+      context,
+    });
+  })
+);
+
+router.get(
+  "/documents/finance/:financeId",
+  requireAuth,
+  requireRoles("school_admin", "principal", "vice_principal", "accountant"),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(financePathSchema, req.params, "Invalid finance owner id");
+    const query = parseSchema(studentDocumentsQuerySchema, req.query, "Invalid finance documents query");
+    const context = await getScopeContext(req.auth);
+
+    await ensureScopeEntityExists({
+      schoolId: req.auth.schoolId,
+      scopeType: "finance",
+      scopeId: path.financeId,
+    });
+
+    return respondWithExactScopeDocuments({
+      req,
+      res,
+      scopeType: "finance",
+      scopeId: path.financeId,
+      query,
+      context,
+    });
+  })
+);
+
+router.get(
+  "/documents/reports/expiry",
+  requireAuth,
+  requireRoles(...EXPIRY_REPORT_ROLES),
+  asyncHandler(async (req, res) => {
+    const query = parseSchema(expiryReportQuerySchema, req.query, "Invalid expiry report query");
+    const context = await getScopeContext(req.auth);
+
+    const baseWhere = ["d.school_id = $1", "d.expires_on IS NOT NULL"];
+    const baseParams = [req.auth.schoolId];
+
+    if (query.category) {
+      baseParams.push(query.category);
+      baseWhere.push(`d.category = $${baseParams.length}`);
+    }
+    if (query.scope_type) {
+      baseParams.push(query.scope_type);
+      baseWhere.push(`d.scope_type = $${baseParams.length}`);
+    }
+
+    applyRoleScopedWhere({
+      auth: req.auth,
+      where: baseWhere,
+      params: baseParams,
+      context,
+    });
+
+    const summaryParams = [...baseParams, query.within_days];
+    const summary = await pool.query(
+      `
+        SELECT
+          COUNT(*)::int AS total_with_expiry,
+          COUNT(*) FILTER (WHERE d.expires_on < CURRENT_DATE)::int AS expired_count,
+          COUNT(*) FILTER (
+            WHERE d.expires_on >= CURRENT_DATE
+              AND d.expires_on <= CURRENT_DATE + ($${summaryParams.length}::text || ' days')::interval
+          )::int AS expiring_within_window_count
+        FROM documents d
+        WHERE ${baseWhere.join(" AND ")}
+      `,
+      summaryParams
+    );
+
+    const reportWhere = [...baseWhere];
+    const reportParams = [...baseParams];
+
+    if (query.status === "expired") {
+      reportWhere.push("d.expires_on < CURRENT_DATE");
+    } else if (query.status === "expiring") {
+      reportParams.push(query.within_days);
+      const windowParam = reportParams.length;
+      reportWhere.push(`d.expires_on >= CURRENT_DATE`);
+      reportWhere.push(`d.expires_on <= CURRENT_DATE + ($${windowParam}::text || ' days')::interval`);
+    } else if (query.status === "active") {
+      reportParams.push(query.within_days);
+      const windowParam = reportParams.length;
+      reportWhere.push(`d.expires_on > CURRENT_DATE + ($${windowParam}::text || ' days')::interval`);
+    }
+
+    const countResult = await pool.query(
+      `
+        SELECT COUNT(*)::int AS total
+        FROM documents d
+        WHERE ${reportWhere.join(" AND ")}
+      `,
+      reportParams
+    );
+    const totalItems = Number(countResult.rows[0]?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / query.page_size));
+    const offset = (query.page - 1) * query.page_size;
+
+    const listParams = [...reportParams, query.page_size, offset];
+    const rows = await pool.query(
+      `
+        SELECT
+          d.*,
+          (d.expires_on - CURRENT_DATE)::int AS days_to_expiry,
+          u.first_name AS uploaded_by_first_name,
+          u.last_name AS uploaded_by_last_name
+        FROM documents d
+        LEFT JOIN users u
+          ON u.id = d.uploaded_by_user_id
+        WHERE ${reportWhere.join(" AND ")}
+        ORDER BY d.expires_on ASC NULLS LAST, d.updated_at DESC
+        LIMIT $${listParams.length - 1}
+        OFFSET $${listParams.length}
+      `,
+      listParams
+    );
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "documents.vault.expiry_report.viewed",
+      entityName: "documents",
+      entityId: null,
+      metadata: {
+        status: query.status,
+        within_days: query.within_days,
+        category: query.category || null,
+        scope_type: query.scope_type || null,
+      },
+    });
+
+    return success(res, rows.rows, 200, {
+      pagination: {
+        page: query.page,
+        page_size: query.page_size,
+        total_items: totalItems,
+        total_pages: totalPages,
+      },
+      summary: summary.rows[0] || {
+        total_with_expiry: 0,
+        expired_count: 0,
+        expiring_within_window_count: 0,
+      },
+    });
+  })
+);
+
+router.get(
+  "/documents/reports/downloads",
+  requireAuth,
+  requireRoles(...DOWNLOAD_REPORT_ROLES),
+  asyncHandler(async (req, res) => {
+    const query = parseSchema(downloadReportQuerySchema, req.query, "Invalid download report query");
+    const context = await getScopeContext(req.auth);
+
     const where = [
       "d.school_id = $1",
-      "d.scope_type = 'student'",
-      "d.scope_id = $2::uuid",
+      `dde.downloaded_at >= NOW() - ($2::text || ' days')::interval`,
     ];
-    const params = [req.auth.schoolId, path.studentId];
+    const params = [req.auth.schoolId, query.days];
 
-    if (!query.include_archived) {
-      where.push("d.is_archived = FALSE");
+    if (query.category) {
+      params.push(query.category);
+      where.push(`d.category = $${params.length}`);
+    }
+    if (query.scope_type) {
+      params.push(query.scope_type);
+      where.push(`d.scope_type = $${params.length}`);
     }
 
     applyRoleScopedWhere({
@@ -1103,49 +1556,131 @@ router.get(
       context,
     });
 
-    const countResult = await pool.query(
-      `
-        SELECT COUNT(*)::int AS total
-        FROM documents d
-        WHERE ${where.join(" AND ")}
-      `,
-      params
-    );
+    const groupedBaseSql = `
+      SELECT
+        d.id AS document_id,
+        d.title,
+        d.category,
+        d.scope_type,
+        d.scope_id,
+        COUNT(dde.id)::int AS downloads_count,
+        COUNT(DISTINCT dde.downloaded_by_user_id)::int AS unique_downloaders,
+        MAX(dde.downloaded_at) AS last_downloaded_at
+      FROM documents d
+      JOIN document_download_events dde
+        ON dde.school_id = d.school_id
+       AND dde.document_id = d.id
+      WHERE ${where.join(" AND ")}
+      GROUP BY d.id
+    `;
+
+    const countResult = await pool.query(`SELECT COUNT(*)::int AS total FROM (${groupedBaseSql}) AS grouped_docs`, params);
     const totalItems = Number(countResult.rows[0]?.total || 0);
     const totalPages = Math.max(1, Math.ceil(totalItems / query.page_size));
     const offset = (query.page - 1) * query.page_size;
 
     const listParams = [...params, query.page_size, offset];
-    const listRows = await pool.query(
+    const rows = await pool.query(
       `
-        SELECT
-          d.*,
-          u.first_name AS uploaded_by_first_name,
-          u.last_name AS uploaded_by_last_name,
-          (
-            SELECT COUNT(*)::int
-            FROM document_versions dv
-            WHERE dv.school_id = d.school_id
-              AND dv.document_id = d.id
-          ) AS versions_count,
-          (
-            SELECT COUNT(*)::int
-            FROM document_download_events dde
-            WHERE dde.school_id = d.school_id
-              AND dde.document_id = d.id
-          ) AS downloads_count
-        FROM documents d
-        LEFT JOIN users u
-          ON u.id = d.uploaded_by_user_id
-        WHERE ${where.join(" AND ")}
-        ORDER BY d.updated_at DESC, d.created_at DESC
+        ${groupedBaseSql}
+        ORDER BY downloads_count DESC, last_downloaded_at DESC
         LIMIT $${listParams.length - 1}
         OFFSET $${listParams.length}
       `,
       listParams
     );
 
-    return success(res, listRows.rows, 200, {
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "documents.vault.download_report.viewed",
+      entityName: "documents",
+      entityId: null,
+      metadata: {
+        days: query.days,
+        category: query.category || null,
+        scope_type: query.scope_type || null,
+      },
+    });
+
+    return success(res, rows.rows, 200, {
+      pagination: {
+        page: query.page,
+        page_size: query.page_size,
+        total_items: totalItems,
+        total_pages: totalPages,
+      },
+    });
+  })
+);
+
+router.get(
+  "/documents/:documentId/download-events",
+  requireAuth,
+  requireRoles(
+    "school_admin",
+    "principal",
+    "vice_principal",
+    "teacher",
+    "front_desk",
+    "hr_admin",
+    "accountant"
+  ),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(documentPathSchema, req.params, "Invalid document id");
+    const query = parseSchema(documentDownloadEventsQuerySchema, req.query, "Invalid document download-events query");
+    const context = await getScopeContext(req.auth);
+    const document = await ensureDocumentReadable({
+      auth: req.auth,
+      documentId: path.documentId,
+      context,
+    });
+
+    if (!isLeadership(req.auth)) {
+      assertDocumentManagePermission({
+        auth: req.auth,
+        row: document,
+        context,
+      });
+    }
+
+    const countResult = await pool.query(
+      `
+        SELECT COUNT(*)::int AS total
+        FROM document_download_events dde
+        WHERE dde.school_id = $1
+          AND dde.document_id = $2
+      `,
+      [req.auth.schoolId, path.documentId]
+    );
+    const totalItems = Number(countResult.rows[0]?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / query.page_size));
+    const offset = (query.page - 1) * query.page_size;
+
+    const rows = await pool.query(
+      `
+        SELECT
+          dde.id,
+          dde.document_id,
+          dde.downloaded_by_user_id,
+          dde.downloaded_at,
+          dde.delivery_method,
+          u.first_name AS downloaded_by_first_name,
+          u.last_name AS downloaded_by_last_name,
+          u.email AS downloaded_by_email
+        FROM document_download_events dde
+        LEFT JOIN users u
+          ON u.id = dde.downloaded_by_user_id
+        WHERE dde.school_id = $1
+          AND dde.document_id = $2
+        ORDER BY dde.downloaded_at DESC
+        LIMIT $3
+        OFFSET $4
+      `,
+      [req.auth.schoolId, path.documentId, query.page_size, offset]
+    );
+
+    return success(res, rows.rows, 200, {
       pagination: {
         page: query.page,
         page_size: query.page_size,
@@ -1225,6 +1760,8 @@ router.patch(
       Object.prototype.hasOwnProperty.call(body, "scope_id")
         ? normalizeScopeId(body.scope_id)
         : existing.scope_id;
+
+    assertCategoryScopeCompatibility({ category: body.category || existing.category, scopeType: nextScopeType });
 
     await ensureScopeEntityExists({
       schoolId: req.auth.schoolId,

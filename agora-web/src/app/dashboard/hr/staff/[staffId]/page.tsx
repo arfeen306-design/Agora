@@ -12,10 +12,13 @@ import {
   createHrLeaveRecord,
   createHrSalaryAdjustment,
   createHrSalaryStructure,
+  getStaffDocuments,
   getHrSalaryAdjustments,
   getHrSalaryStructures,
   getHrStaffProfile,
+  issueDocumentDownloadUrl,
   updateHrStaffProfile,
+  type DocumentVaultItem,
   type HrStaffProfilePayload,
   type HrSalaryAdjustmentRecord,
   type HrSalaryStructureRecord,
@@ -64,6 +67,7 @@ export default function HrStaffProfilePage() {
   const [profileResponse, setProfileResponse] = useState<HrStaffProfilePayload | null>(null);
   const [salaryStructures, setSalaryStructures] = useState<HrSalaryStructureRecord[]>([]);
   const [adjustments, setAdjustments] = useState<HrSalaryAdjustmentRecord[]>([]);
+  const [staffDocuments, setStaffDocuments] = useState<DocumentVaultItem[]>([]);
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingStructure, setSavingStructure] = useState(false);
@@ -137,6 +141,13 @@ export default function HrStaffProfilePage() {
       setProfileResponse(profileData);
       setSalaryStructures(structuresRes.data || []);
       setAdjustments(adjustmentRes.data || []);
+
+      try {
+        const docsRes = await getStaffDocuments(staffId, { page: 1, page_size: 20 });
+        setStaffDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
+      } catch {
+        setStaffDocuments([]);
+      }
 
       const profile = (profileData?.profile || {}) as Record<string, unknown>;
       setProfileForm((prev) => ({
@@ -292,6 +303,18 @@ export default function HrStaffProfilePage() {
       setError(extractErrorMessage(err, "Failed to save leave record"));
     } finally {
       setSavingLeave(false);
+    }
+  }
+
+  async function handleDocumentDownload(documentId: string) {
+    setError("");
+    try {
+      const payload = await issueDocumentDownloadUrl(documentId);
+      if (payload.download?.url) {
+        window.open(payload.download.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err: unknown) {
+      setError(extractErrorMessage(err, "Failed to generate download URL"));
     }
   }
 
@@ -621,6 +644,48 @@ export default function HrStaffProfilePage() {
                   ))}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-sky-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-lg font-semibold text-gray-900">Linked Documents</h3>
+            <Link href={`/dashboard/documents?scope_type=staff&scope_id=${staffId}`} className="btn-secondary">
+              Open Document Vault
+            </Link>
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            Appointment letters, salary slips, contracts, and HR documents linked to this staff profile.
+          </p>
+          <div className="mt-4 space-y-2">
+            {staffDocuments.length === 0 ? (
+              <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
+                No staff-linked documents available yet.
+              </p>
+            ) : (
+              staffDocuments.slice(0, 12).map((doc) => (
+                <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{doc.title}</p>
+                    <p className="text-xs text-gray-500">
+                      {doc.category.replaceAll("_", " ")} • {new Date(doc.updated_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Link href={`/dashboard/documents/${doc.id}`} className="btn-secondary">
+                      View
+                    </Link>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => handleDocumentDownload(doc.id)}
+                    >
+                      Download
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </section>
       </div>

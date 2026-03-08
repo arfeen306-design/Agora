@@ -14,12 +14,14 @@ interface ApiResponse<T = unknown> {
     page_size?: number;
     total_items?: number;
     total_pages?: number;
+    summary?: Record<string, unknown>;
     pagination?: {
       page: number;
       page_size: number;
       total_items: number;
       total_pages: number;
     };
+    [key: string]: unknown;
   };
 }
 
@@ -2177,6 +2179,7 @@ export async function downloadMyHrSalarySlipPdf(recordId: string) {
 export interface DocumentCategoryOption {
   code: string;
   label: string;
+  allowed_scope_types?: string[];
 }
 
 export interface DocumentVaultItem {
@@ -2271,6 +2274,28 @@ export interface DocumentDownloadTarget {
   method?: string;
 }
 
+export interface DocumentDownloadEvent {
+  id: string;
+  document_id: string;
+  downloaded_by_user_id?: string | null;
+  downloaded_by_first_name?: string | null;
+  downloaded_by_last_name?: string | null;
+  downloaded_by_email?: string | null;
+  downloaded_at: string;
+  delivery_method: string;
+}
+
+export interface DocumentDownloadsReportRow {
+  document_id: string;
+  title: string;
+  category: string;
+  scope_type: string;
+  scope_id?: string | null;
+  downloads_count: number;
+  unique_downloaders: number;
+  last_downloaded_at?: string | null;
+}
+
 export async function getDocumentCategories() {
   const res = await request<DocumentCategoryOption[]>("/documents/categories");
   return res.data;
@@ -2338,6 +2363,60 @@ export async function getStudentDocuments(
   );
 }
 
+export async function getStaffDocuments(
+  staffId: string,
+  params: {
+    include_archived?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.include_archived) query.set("include_archived", "true");
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentVaultItem[]>(
+    `/documents/staff/${staffId}${suffix ? `?${suffix}` : ""}`
+  );
+}
+
+export async function getAdmissionDocuments(
+  applicationId: string,
+  params: {
+    include_archived?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.include_archived) query.set("include_archived", "true");
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentVaultItem[]>(
+    `/documents/admission/${applicationId}${suffix ? `?${suffix}` : ""}`
+  );
+}
+
+export async function getFinanceDocuments(
+  financeId: string,
+  params: {
+    include_archived?: boolean;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.include_archived) query.set("include_archived", "true");
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentVaultItem[]>(
+    `/documents/finance/${financeId}${suffix ? `?${suffix}` : ""}`
+  );
+}
+
 export async function setDocumentAccessRules(documentId: string, accessRules: DocumentAccessRuleInput[]) {
   const res = await request<{
     document_id: string;
@@ -2382,4 +2461,64 @@ export async function issueDocumentDownloadUrl(documentId: string) {
     method: "POST",
   });
   return res.data;
+}
+
+export async function getDocumentDownloadEvents(
+  documentId: string,
+  params: {
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentDownloadEvent[]>(
+    `/documents/${documentId}/download-events${suffix ? `?${suffix}` : ""}`
+  );
+}
+
+export async function getDocumentExpiryReport(
+  params: {
+    status?: "all" | "expired" | "expiring" | "active";
+    within_days?: number;
+    category?: string;
+    scope_type?: string;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.within_days) query.set("within_days", String(params.within_days));
+  if (params.category) query.set("category", params.category);
+  if (params.scope_type) query.set("scope_type", params.scope_type);
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentVaultItem[]>(
+    `/documents/reports/expiry${suffix ? `?${suffix}` : ""}`
+  );
+}
+
+export async function getDocumentDownloadsReport(
+  params: {
+    days?: number;
+    category?: string;
+    scope_type?: string;
+    page?: number;
+    page_size?: number;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.days) query.set("days", String(params.days));
+  if (params.category) query.set("category", params.category);
+  if (params.scope_type) query.set("scope_type", params.scope_type);
+  if (params.page) query.set("page", String(params.page));
+  if (params.page_size) query.set("page_size", String(params.page_size));
+  const suffix = query.toString();
+  return request<DocumentDownloadsReportRow[]>(
+    `/documents/reports/downloads${suffix ? `?${suffix}` : ""}`
+  );
 }

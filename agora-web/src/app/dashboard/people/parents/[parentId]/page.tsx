@@ -8,10 +8,13 @@ import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import {
   ApiError,
+  getDocuments,
   getFeeInvoices,
   getLookupStudents,
   getPeopleParent,
   getPeopleParents,
+  issueDocumentDownloadUrl,
+  type DocumentVaultItem,
   type LookupStudent,
   type ParentDirectoryRow,
   type ParentLinkedStudentRecord,
@@ -108,6 +111,7 @@ export default function ParentProfilePage() {
   const [parent, setParent] = useState<ParentProfileRecord | null>(null);
   const [students, setStudents] = useState<LookupStudent[]>([]);
   const [links, setLinks] = useState<ParentStudentLinkInput[]>([]);
+  const [parentDocuments, setParentDocuments] = useState<DocumentVaultItem[]>([]);
 
   const [form, setForm] = useState({
     first_name: "",
@@ -267,9 +271,22 @@ export default function ParentProfilePage() {
       syncForm(profile);
       setStudents(studentLookup);
       await loadFeeSummary(profile);
+
+      try {
+        const docsRes = await getDocuments({
+          scope_type: "parent",
+          scope_id: parentId,
+          page: 1,
+          page_size: 20,
+        });
+        setParentDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
+      } catch {
+        setParentDocuments([]);
+      }
     } catch (err: unknown) {
       setParent(null);
       setError(extractErrorMessage(err, "Failed to load parent profile"));
+      setParentDocuments([]);
     } finally {
       setLoading(false);
     }
@@ -345,6 +362,18 @@ export default function ParentProfilePage() {
       setError(extractErrorMessage(err, "Failed to update parent profile"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDocumentDownload(documentId: string) {
+    setError("");
+    try {
+      const payload = await issueDocumentDownloadUrl(documentId);
+      if (payload.download?.url) {
+        window.open(payload.download.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (err: unknown) {
+      setError(extractErrorMessage(err, "Failed to generate document download URL"));
     }
   }
 
@@ -535,6 +564,48 @@ export default function ParentProfilePage() {
                   {feeSummary.note || "Fee summary is currently unavailable for this role."}
                 </p>
               )}
+            </article>
+
+            <article className="rounded-2xl border border-sky-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-lg font-semibold text-gray-900">Parent Documents</h3>
+                <Link href={`/dashboard/documents?scope_type=parent&scope_id=${parentId}`} className="btn-secondary">
+                  Open Vault
+                </Link>
+              </div>
+              <p className="mt-1 text-sm text-gray-500">
+                Consent files, identity records, receipts, and parent-related documents linked to this profile.
+              </p>
+              <div className="mt-4 space-y-2">
+                {parentDocuments.length === 0 ? (
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-sm text-gray-500">
+                    No parent-linked documents available yet.
+                  </p>
+                ) : (
+                  parentDocuments.slice(0, 10).map((doc) => (
+                    <div key={doc.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800">{doc.title}</p>
+                        <p className="text-xs text-gray-500">
+                          {doc.category.replaceAll("_", " ")} • {new Date(doc.updated_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Link href={`/dashboard/documents/${doc.id}`} className="btn-secondary">
+                          View
+                        </Link>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => handleDocumentDownload(doc.id)}
+                        >
+                          Download
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </article>
           </div>
         </section>

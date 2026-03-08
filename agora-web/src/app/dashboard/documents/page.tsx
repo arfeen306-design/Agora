@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import Header from "@/components/Header";
@@ -213,10 +214,7 @@ export default function DocumentsPage() {
     }
 
     const trimmedScopeId = createForm.scope_id.trim();
-    const scopeId =
-      createForm.scope_type === "school"
-        ? null
-        : trimmedScopeId || (createForm.scope_type === "finance" || createForm.scope_type === "admission" ? crypto.randomUUID() : "");
+    const scopeId = createForm.scope_type === "school" ? null : trimmedScopeId;
 
     if (createForm.scope_type !== "school" && !scopeId) {
       setMessage("Please provide scope id for the selected scope type.");
@@ -486,7 +484,22 @@ export default function DocumentsPage() {
               <select
                 className="input-field"
                 value={createForm.category}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, category: e.target.value }))}
+                onChange={(e) => {
+                  const nextCategory = e.target.value;
+                  const nextCategoryConfig = categories.find((option) => option.code === nextCategory);
+                  const allowedScopes = nextCategoryConfig?.allowed_scope_types || [];
+                  setCreateForm((prev) => {
+                    if (allowedScopes.length === 0 || allowedScopes.includes(prev.scope_type)) {
+                      return { ...prev, category: nextCategory };
+                    }
+                    return {
+                      ...prev,
+                      category: nextCategory,
+                      scope_type: allowedScopes[0],
+                      scope_id: "",
+                    };
+                  });
+                }}
               >
                 {categories.map((option) => (
                   <option key={option.code} value={option.code}>
@@ -509,12 +522,21 @@ export default function DocumentsPage() {
               </select>
               <input
                 className="input-field"
-                placeholder={createForm.scope_type === "school" ? "Not required for school scope" : "Scope UUID"}
+                placeholder={createForm.scope_type === "school" ? "Not required for school scope" : "Existing owner UUID"}
                 value={createForm.scope_id}
                 disabled={createForm.scope_type === "school"}
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, scope_id: e.target.value }))}
               />
             </div>
+            {(() => {
+              const selectedCategory = categories.find((option) => option.code === createForm.category);
+              if (!selectedCategory?.allowed_scope_types?.length) return null;
+              return (
+                <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                  Allowed scopes for this category: {selectedCategory.allowed_scope_types.join(", ")}
+                </p>
+              );
+            })()}
             <div className="mt-4 flex justify-end">
               <button className="btn-primary" onClick={handleCreateDocument} disabled={submitting}>
                 {submitting ? "Saving..." : "Create"}
@@ -565,8 +587,14 @@ export default function DocumentsPage() {
                           className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
                           onClick={() => loadDocumentDetail(item.id)}
                         >
-                          View
+                          Quick View
                         </button>
+                        <Link
+                          href={`/dashboard/documents/${item.id}`}
+                          className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+                        >
+                          Full Detail
+                        </Link>
                         <button
                           className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
                           onClick={() => handleDownload(item.id)}
