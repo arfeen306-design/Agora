@@ -27,8 +27,8 @@ export default function TimetableScheduleGrid({
   slots,
   entries,
 }: TimetableScheduleGridProps) {
-  const days = [...new Set(slots.map((row) => row.day_of_week))].sort((a, b) => a - b);
-  const periods = [...new Set(slots.map((row) => row.period_number))].sort((a, b) => a - b);
+  const days = Array.from(new Set(slots.map((row) => row.day_of_week))).sort((a, b) => a - b);
+  const periods = Array.from(new Set(slots.map((row) => row.period_number))).sort((a, b) => a - b);
 
   const slotByDayPeriod = new Map<string, TimetableSlotRow>();
   for (const slot of slots) {
