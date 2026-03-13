@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "@/components/Header";
+import { useAuth } from "@/lib/auth";
 import { getNotifications, markNotificationRead } from "@/lib/api";
 
 interface NotificationRow {
@@ -18,6 +19,8 @@ type SortColumn = "created_at" | "status" | "channel" | "title";
 const STORAGE_KEY = "agora_web_notifications_filters_v1";
 
 export default function NotificationsPage() {
+  const { user } = useAuth();
+  const isFamilyViewer = (user?.roles || []).some((role) => role === "parent" || role === "student");
   const [items, setItems] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -185,6 +188,24 @@ export default function NotificationsPage() {
     });
   }, [items, search, sortBy, sortDir]);
 
+  const unreadItems = useMemo(() => viewItems.filter((item) => item.status !== "read"), [viewItems]);
+  const readItems = useMemo(() => viewItems.filter((item) => item.status === "read"), [viewItems]);
+  const channelCounts = useMemo(() => {
+    return viewItems.reduce<Record<string, number>>((acc, item) => {
+      acc[item.channel] = (acc[item.channel] || 0) + 1;
+      return acc;
+    }, {});
+  }, [viewItems]);
+
+  const familyHighlights = useMemo(() => unreadItems.slice(0, 4), [unreadItems]);
+  const familyTimeline = useMemo(
+    () =>
+      [...viewItems]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 8),
+    [viewItems]
+  );
+
   return (
     <>
       <Header title="Notifications" />
@@ -193,6 +214,26 @@ export default function NotificationsPage() {
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {message}
           </div>
+        )}
+
+        {isFamilyViewer && (
+          <section className="mb-6 rounded-3xl bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-400 p-6 text-slate-900 shadow-lg">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-800/80">Family Communication Center</p>
+                <h2 className="mt-2 text-3xl font-bold">School Notices & Updates</h2>
+                <p className="mt-2 text-sm text-slate-800/80">
+                  A cleaner family view of school notices, alerts, and updates that matter for your child.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <FamilyNoticeBadge label="Unread" value={unreadItems.length} tone="bg-white/70 text-slate-900" />
+                <FamilyNoticeBadge label="Read" value={readItems.length} tone="bg-white/50 text-slate-900" />
+                <FamilyNoticeBadge label="In App" value={channelCounts.in_app || 0} tone="bg-white/50 text-slate-900" />
+                <FamilyNoticeBadge label="Push / Email" value={(channelCounts.push || 0) + (channelCounts.email || 0)} tone="bg-white/50 text-slate-900" />
+              </div>
+            </div>
+          </section>
         )}
 
         <div className="mb-6 flex flex-wrap items-end gap-4">
@@ -266,6 +307,88 @@ export default function NotificationsPage() {
         <div className="mb-4 text-sm text-gray-500">
           Showing <strong>{viewItems.length}</strong> item(s) on this page.
         </div>
+
+        {isFamilyViewer && (
+          <>
+            <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
+              <div className="card xl:col-span-2">
+                <h3 className="text-lg font-semibold text-gray-900">Unread Priority Notices</h3>
+                {familyHighlights.length === 0 ? (
+                  <p className="mt-3 text-sm text-gray-500">No unread notices right now.</p>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {familyHighlights.map((item) => (
+                      <div key={item.id} className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-semibold text-gray-900">{item.title}</p>
+                            <p className="mt-1 text-sm text-gray-600">{item.body}</p>
+                            <p className="mt-2 text-xs text-gray-500">
+                              {new Date(item.created_at).toLocaleString()} • via {item.channel.replace("_", " ")}
+                            </p>
+                          </div>
+                          <button className="btn-secondary" onClick={() => markAsRead(item.id)}>
+                            Mark read
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="card">
+                <h3 className="text-lg font-semibold text-gray-900">Delivery Summary</h3>
+                <div className="mt-4 space-y-3">
+                  {[
+                    { label: "In App", value: channelCounts.in_app || 0 },
+                    { label: "Push", value: channelCounts.push || 0 },
+                    { label: "Email", value: channelCounts.email || 0 },
+                    { label: "SMS", value: channelCounts.sms || 0 },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center justify-between rounded-xl border border-gray-200 px-3 py-2">
+                      <span className="text-sm text-gray-600">{item.label}</span>
+                      <span className="text-sm font-semibold text-gray-900">{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="card mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">Recent Communication Timeline</h3>
+              {familyTimeline.length === 0 ? (
+                <p className="mt-3 text-sm text-gray-500">No communication history yet.</p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {familyTimeline.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-gray-200 p-4 shadow-sm">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-gray-900">{item.title}</p>
+                            {statusBadge(item.status)}
+                          </div>
+                          <p className="mt-1 text-sm text-gray-600">{item.body}</p>
+                          <p className="mt-2 text-xs text-gray-500">
+                            {new Date(item.created_at).toLocaleString()} • {item.channel.replace("_", " ")}
+                          </p>
+                        </div>
+                        {item.status !== "read" ? (
+                          <button className="btn-secondary" onClick={() => markAsRead(item.id)}>
+                            Mark read
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-400">Read</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         <div className="space-y-3 md:hidden">
           {loading ? (
@@ -366,5 +489,14 @@ export default function NotificationsPage() {
         )}
       </div>
     </>
+  );
+}
+
+function FamilyNoticeBadge({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className={`rounded-2xl px-4 py-3 shadow-sm ${tone}`}>
+      <p className="text-[11px] uppercase tracking-[0.16em]">{label}</p>
+      <p className="mt-1 text-xl font-bold">{value}</p>
+    </div>
   );
 }

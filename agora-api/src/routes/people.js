@@ -144,6 +144,26 @@ const createStudentSchema = z.object({
   parent_user_id: z.string().uuid().optional(),
   relation_type: z.string().trim().min(1).max(40).default("guardian"),
   is_primary_parent: z.boolean().default(true),
+  parent: z
+    .object({
+      first_name: z.string().trim().min(1).max(80),
+      last_name: z.string().trim().max(80).optional(),
+      email: z.string().trim().email().optional(),
+      phone: z.string().trim().min(3).max(60).optional(),
+      temporary_password: z.string().min(6).max(120).default("ChangeMe123!"),
+      is_active: z.boolean().default(true),
+      occupation: z.string().trim().max(120).optional(),
+      guardian_name: z.string().trim().max(160).optional(),
+      father_name: z.string().trim().max(160).optional(),
+      mother_name: z.string().trim().max(160).optional(),
+      whatsapp_number: z.string().trim().max(60).optional(),
+      address_line: z.string().trim().max(300).optional(),
+      preferred_channel: z.enum(["in_app", "push", "email", "sms"]).default("in_app"),
+      relation_type: z.string().trim().min(1).max(40).default("guardian"),
+      is_primary: z.boolean().default(true),
+    })
+    .strict()
+    .optional(),
 });
 
 const studentPathSchema = z.object({
@@ -400,6 +420,141 @@ async function getParentRoleId() {
   }
 
   return role.rows[0].id;
+}
+
+async function getParentRoleIdFromClient(client) {
+  const role = await client.query(
+    `
+      SELECT id
+      FROM roles
+      WHERE code = 'parent'
+      LIMIT 1
+    `
+  );
+
+  if (!role.rows[0]) {
+    throw new AppError(500, "INTERNAL_SERVER_ERROR", "Parent role is not configured");
+  }
+
+  return role.rows[0].id;
+}
+
+function normalizeString(value) {
+  const clean = String(value || "").trim();
+  return clean || null;
+}
+
+function normalizeEmail(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return clean || null;
+}
+
+async function ensureOrCreateParentAccountForStudent({
+  client,
+  schoolId,
+  parentInput,
+  parentRoleId,
+}) {
+  const email = normalizeEmail(parentInput.email);
+  const phone = normalizeString(parentInput.phone);
+  const whatsapp = normalizeString(parentInput.whatsapp_number);
+
+  const existingUser = await client.query(
+    `
+      SELECT id
+      FROM users
+      WHERE school_id = $1
+        AND (
+          ($2::text IS NOT NULL AND LOWER(email) = LOWER($2))
+          OR ($3::text IS NOT NULL AND phone = $3)
+          OR ($4::text IS NOT NULL AND phone = $4)
+        )
+      ORDER BY created_at ASC
+      LIMIT 1
+    `,
+    [schoolId, email, phone, whatsapp]
+  );
+
+  let userId = existingUser.rows[0]?.id || null;
+  if (!userId) {
+    const fallbackEmail = `parent.${Date.now()}.${Math.floor(Math.random() * 1000)}@agora.local`;
+    const passwordHash = await bcrypt.hash(parentInput.temporary_password || "ChangeMe123!", 10);
+    const createdUser = await client.query(
+      `
+        INSERT INTO users (
+          school_id,
+          email,
+          phone,
+          password_hash,
+          first_name,
+          last_name,
+          is_active
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+      `,
+      [
+        schoolId,
+        email || fallbackEmail,
+        phone || whatsapp,
+        passwordHash,
+        parentInput.first_name,
+        normalizeString(parentInput.last_name),
+        parentInput.is_active !== false,
+      ]
+    );
+    userId = createdUser.rows[0].id;
+  }
+
+  await client.query(
+    `
+      INSERT INTO user_roles (user_id, role_id)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+    `,
+    [userId, parentRoleId]
+  );
+
+  const parentProfile = await client.query(
+    `
+      INSERT INTO parents (
+        school_id,
+        user_id,
+        occupation,
+        guardian_name,
+        father_name,
+        mother_name,
+        whatsapp_number,
+        address_line,
+        preferred_channel
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::notification_channel)
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        occupation = COALESCE(EXCLUDED.occupation, parents.occupation),
+        guardian_name = COALESCE(EXCLUDED.guardian_name, parents.guardian_name),
+        father_name = COALESCE(EXCLUDED.father_name, parents.father_name),
+        mother_name = COALESCE(EXCLUDED.mother_name, parents.mother_name),
+        whatsapp_number = COALESCE(EXCLUDED.whatsapp_number, parents.whatsapp_number),
+        address_line = COALESCE(EXCLUDED.address_line, parents.address_line),
+        preferred_channel = COALESCE(EXCLUDED.preferred_channel, parents.preferred_channel),
+        updated_at = NOW()
+      RETURNING id
+    `,
+    [
+      schoolId,
+      userId,
+      normalizeString(parentInput.occupation),
+      normalizeString(parentInput.guardian_name) || normalizeString(parentInput.father_name),
+      normalizeString(parentInput.father_name),
+      normalizeString(parentInput.mother_name),
+      whatsapp,
+      normalizeString(parentInput.address_line),
+      parentInput.preferred_channel || "in_app",
+    ]
+  );
+
+  return parentProfile.rows[0].id;
 }
 
 async function ensureStudentsExistInSchool(schoolId, studentIds) {
@@ -1172,6 +1327,169 @@ router.patch(
 );
 
 router.get(
+  "/people/me/students",
+  requireAuth,
+  requireRoles("parent", "student"),
+  asyncHandler(async (req, res) => {
+    let rows = [];
+
+    if (hasRole(req.auth, "parent")) {
+      const result = await pool.query(
+        `
+          SELECT
+            s.id,
+            s.student_code,
+            s.first_name,
+            s.last_name,
+            ps.relation_type,
+            ps.is_primary,
+            se.classroom_id,
+            c.grade_label,
+            c.section_label,
+            c.classroom_code,
+            COALESCE(
+              NULLIF(TRIM(CONCAT(ht_user.first_name, ' ', COALESCE(ht_user.last_name, ''))), ''),
+              NULLIF(TRIM(CONCAT(class_teacher_user.first_name, ' ', COALESCE(class_teacher_user.last_name, ''))), '')
+            ) AS class_teacher_name
+          FROM parents p
+          JOIN parent_students ps
+            ON ps.parent_id = p.id
+           AND ps.school_id = p.school_id
+          JOIN students s
+            ON s.id = ps.student_id
+           AND s.school_id = ps.school_id
+          LEFT JOIN LATERAL (
+            SELECT
+              se1.classroom_id
+            FROM student_enrollments se1
+            WHERE se1.school_id = s.school_id
+              AND se1.student_id = s.id
+              AND se1.status = 'active'
+            ORDER BY se1.joined_on DESC NULLS LAST, se1.created_at DESC
+            LIMIT 1
+          ) se ON TRUE
+          LEFT JOIN classrooms c
+            ON c.id = se.classroom_id
+           AND c.school_id = s.school_id
+          LEFT JOIN teachers ht
+            ON ht.id = c.homeroom_teacher_id
+          LEFT JOIN users ht_user
+            ON ht_user.id = ht.user_id
+           AND ht_user.school_id = c.school_id
+          LEFT JOIN LATERAL (
+            SELECT
+              sp.user_id
+            FROM staff_classroom_assignments sca
+            JOIN staff_profiles sp
+              ON sp.id = sca.staff_profile_id
+             AND sp.school_id = sca.school_id
+            WHERE sca.school_id = c.school_id
+              AND sca.classroom_id = c.id
+              AND sca.is_active = TRUE
+              AND sca.assignment_role = 'class_teacher'
+            ORDER BY sca.created_at DESC
+            LIMIT 1
+          ) class_teacher_staff ON TRUE
+          LEFT JOIN users class_teacher_user
+            ON class_teacher_user.id = class_teacher_staff.user_id
+           AND class_teacher_user.school_id = c.school_id
+          WHERE p.school_id = $1
+            AND p.user_id = $2
+          ORDER BY ps.is_primary DESC, s.first_name ASC, s.last_name ASC NULLS LAST
+        `,
+        [req.auth.schoolId, req.auth.userId]
+      );
+      rows = result.rows;
+    } else if (hasRole(req.auth, "student")) {
+      const result = await pool.query(
+        `
+          SELECT
+            s.id,
+            s.student_code,
+            s.first_name,
+            s.last_name,
+            'self'::text AS relation_type,
+            TRUE AS is_primary,
+            se.classroom_id,
+            c.grade_label,
+            c.section_label,
+            c.classroom_code,
+            COALESCE(
+              NULLIF(TRIM(CONCAT(ht_user.first_name, ' ', COALESCE(ht_user.last_name, ''))), ''),
+              NULLIF(TRIM(CONCAT(class_teacher_user.first_name, ' ', COALESCE(class_teacher_user.last_name, ''))), '')
+            ) AS class_teacher_name
+          FROM student_user_accounts sua
+          JOIN students s
+            ON s.id = sua.student_id
+          LEFT JOIN LATERAL (
+            SELECT
+              se1.classroom_id
+            FROM student_enrollments se1
+            WHERE se1.school_id = s.school_id
+              AND se1.student_id = s.id
+              AND se1.status = 'active'
+            ORDER BY se1.joined_on DESC NULLS LAST, se1.created_at DESC
+            LIMIT 1
+          ) se ON TRUE
+          LEFT JOIN classrooms c
+            ON c.id = se.classroom_id
+           AND c.school_id = s.school_id
+          LEFT JOIN teachers ht
+            ON ht.id = c.homeroom_teacher_id
+          LEFT JOIN users ht_user
+            ON ht_user.id = ht.user_id
+           AND ht_user.school_id = c.school_id
+          LEFT JOIN LATERAL (
+            SELECT
+              sp.user_id
+            FROM staff_classroom_assignments sca
+            JOIN staff_profiles sp
+              ON sp.id = sca.staff_profile_id
+             AND sp.school_id = sca.school_id
+            WHERE sca.school_id = c.school_id
+              AND sca.classroom_id = c.id
+              AND sca.is_active = TRUE
+              AND sca.assignment_role = 'class_teacher'
+            ORDER BY sca.created_at DESC
+            LIMIT 1
+          ) class_teacher_staff ON TRUE
+          LEFT JOIN users class_teacher_user
+            ON class_teacher_user.id = class_teacher_staff.user_id
+           AND class_teacher_user.school_id = c.school_id
+          WHERE s.school_id = $1
+            AND sua.user_id = $2
+          ORDER BY s.first_name ASC, s.last_name ASC NULLS LAST
+        `,
+        [req.auth.schoolId, req.auth.userId]
+      );
+      rows = result.rows;
+    }
+
+    const data = rows.map((row) => ({
+      id: row.id,
+      student_code: row.student_code,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      full_name: [row.first_name, row.last_name].filter(Boolean).join(" ").trim(),
+      relation_type: row.relation_type,
+      is_primary: Boolean(row.is_primary),
+      classroom: row.classroom_id
+        ? {
+            classroom_id: row.classroom_id,
+            grade_label: row.grade_label,
+            section_label: row.section_label,
+            classroom_code: row.classroom_code,
+            display_name: `${row.grade_label} - ${row.section_label}`,
+            class_teacher_name: row.class_teacher_name || null,
+          }
+        : null,
+    }));
+
+    return success(res, data, 200);
+  })
+);
+
+router.get(
   "/people/students",
   requireAuth,
   requireRoles(...STUDENT_VIEW_ROLES),
@@ -1396,10 +1714,10 @@ router.get(
           ps.relation_type,
           ps.is_primary,
           p.user_id AS parent_user_id,
-          p.guardian_name,
-          p.father_name,
-          p.mother_name,
-          p.whatsapp_number,
+          to_jsonb(p)->>'guardian_name' AS guardian_name,
+          to_jsonb(p)->>'father_name' AS father_name,
+          to_jsonb(p)->>'mother_name' AS mother_name,
+          to_jsonb(p)->>'whatsapp_number' AS whatsapp_number,
           u.first_name,
           u.last_name,
           u.email,
@@ -1489,6 +1807,13 @@ router.post(
   requireRoles(...STUDENT_MANAGE_ROLES),
   asyncHandler(async (req, res) => {
     const body = parseSchema(createStudentSchema, req.body, "Invalid student create payload");
+    if (body.parent_user_id && body.parent) {
+      throw new AppError(
+        422,
+        "VALIDATION_ERROR",
+        "Provide either parent_user_id or parent payload, not both"
+      );
+    }
 
     const classroom = await ensureClassroomInSchool(req.auth.schoolId, body.classroom_id || null);
 
@@ -1498,8 +1823,6 @@ router.post(
     } else if (classroom?.academic_year_id) {
       academicYearId = classroom.academic_year_id;
     }
-
-    const parentId = await resolveParentIdByUser(req.auth.schoolId, body.parent_user_id || null);
 
     const client = await pool.connect();
     try {
@@ -1571,6 +1894,19 @@ router.post(
         );
       }
 
+      let parentId = null;
+      if (body.parent_user_id) {
+        parentId = await resolveParentIdByUser(req.auth.schoolId, body.parent_user_id || null);
+      } else if (body.parent) {
+        const parentRoleId = await getParentRoleIdFromClient(client);
+        parentId = await ensureOrCreateParentAccountForStudent({
+          client,
+          schoolId: req.auth.schoolId,
+          parentInput: body.parent,
+          parentRoleId,
+        });
+      }
+
       if (parentId) {
         await client.query(
           `
@@ -1591,8 +1927,8 @@ router.post(
             req.auth.schoolId,
             parentId,
             student.id,
-            body.relation_type,
-            body.is_primary_parent,
+            body.parent?.relation_type || body.relation_type,
+            body.parent?.is_primary ?? body.is_primary_parent,
           ]
         );
       }
@@ -1610,6 +1946,7 @@ router.post(
           enrollment_classroom_id: classroom?.id || null,
           enrollment_academic_year_id: academicYearId || null,
           parent_linked: Boolean(parentId),
+          parent_creation_mode: body.parent ? "inline_payload" : body.parent_user_id ? "existing_parent_user" : "none",
         },
       });
 
@@ -1625,6 +1962,7 @@ router.post(
               }
             : null,
           parent_linked: Boolean(parentId),
+          parent_id: parentId,
         },
         201
       );
@@ -1654,9 +1992,9 @@ router.get(
       params.push(`%${query.search}%`);
       where.push(`
         (
-          COALESCE(p.guardian_name, '') ILIKE $${params.length}
-          OR COALESCE(p.father_name, '') ILIKE $${params.length}
-          OR COALESCE(p.mother_name, '') ILIKE $${params.length}
+          COALESCE(to_jsonb(p)->>'guardian_name', '') ILIKE $${params.length}
+          OR COALESCE(to_jsonb(p)->>'father_name', '') ILIKE $${params.length}
+          OR COALESCE(to_jsonb(p)->>'mother_name', '') ILIKE $${params.length}
           OR u.first_name ILIKE $${params.length}
           OR COALESCE(u.last_name, '') ILIKE $${params.length}
           OR u.email ILIKE $${params.length}
@@ -1744,12 +2082,12 @@ router.get(
           p.id,
           p.user_id,
           p.occupation,
-          p.guardian_name,
-          p.father_name,
-          p.mother_name,
-          p.whatsapp_number,
-          p.address_line,
-          p.preferred_channel,
+          to_jsonb(p)->>'guardian_name' AS guardian_name,
+          to_jsonb(p)->>'father_name' AS father_name,
+          to_jsonb(p)->>'mother_name' AS mother_name,
+          to_jsonb(p)->>'whatsapp_number' AS whatsapp_number,
+          to_jsonb(p)->>'address_line' AS address_line,
+          to_jsonb(p)->>'preferred_channel' AS preferred_channel,
           p.created_at,
           p.updated_at,
           u.first_name,
@@ -1970,12 +2308,12 @@ router.get(
           p.id,
           p.user_id,
           p.occupation,
-          p.guardian_name,
-          p.father_name,
-          p.mother_name,
-          p.whatsapp_number,
-          p.address_line,
-          p.preferred_channel,
+          to_jsonb(p)->>'guardian_name' AS guardian_name,
+          to_jsonb(p)->>'father_name' AS father_name,
+          to_jsonb(p)->>'mother_name' AS mother_name,
+          to_jsonb(p)->>'whatsapp_number' AS whatsapp_number,
+          to_jsonb(p)->>'address_line' AS address_line,
+          to_jsonb(p)->>'preferred_channel' AS preferred_channel,
           p.created_at,
           p.updated_at,
           u.first_name,
@@ -2208,12 +2546,12 @@ router.patch(
             p.id,
             p.user_id,
             p.occupation,
-            p.guardian_name,
-            p.father_name,
-            p.mother_name,
-            p.whatsapp_number,
-            p.address_line,
-            p.preferred_channel,
+            to_jsonb(p)->>'guardian_name' AS guardian_name,
+            to_jsonb(p)->>'father_name' AS father_name,
+            to_jsonb(p)->>'mother_name' AS mother_name,
+            to_jsonb(p)->>'whatsapp_number' AS whatsapp_number,
+            to_jsonb(p)->>'address_line' AS address_line,
+            to_jsonb(p)->>'preferred_channel' AS preferred_channel,
             p.created_at,
             p.updated_at,
             u.first_name,

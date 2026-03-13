@@ -73,6 +73,7 @@ async function waitForAuditAction(action, entityId, attempts = 12) {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
 
   server = http.createServer(app);
@@ -385,6 +386,61 @@ test("people students create endpoint works with enrollment and parent link", as
   assert.ok(listed.body.data.some((row) => row.student_code === `STD-${suffix}`));
 });
 
+test("people students create supports inline parent creation in one admission payload", async () => {
+  const adminToken = await login("admin@agora.com", "admin123");
+  const suffix = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const studentCode = `STD-INLINE-${suffix}`;
+  const parentEmail = `inline.parent.${suffix.toLowerCase()}@agora.com`;
+
+  const created = await jsonRequest("/api/v1/people/students", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({
+      student_code: studentCode,
+      first_name: "Inline",
+      last_name: "Student",
+      admission_date: "2026-01-14",
+      classroom_id: "60000000-0000-0000-0000-000000000001",
+      parent: {
+        first_name: "Inline",
+        last_name: "Parent",
+        email: parentEmail,
+        phone: `+9230${suffix.replace(/[^0-9]/g, "").padEnd(8, "5").slice(0, 8)}`,
+        relation_type: "father",
+        is_primary: true,
+      },
+    }),
+  });
+
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body?.success, true);
+  assert.equal(created.body?.data?.parent_linked, true);
+  assert.ok(created.body?.data?.parent_id);
+
+  const parentList = await jsonRequest(`/api/v1/people/parents?search=${encodeURIComponent(parentEmail)}`, {
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+
+  assert.equal(parentList.status, 200, JSON.stringify(parentList.body));
+  assert.equal(parentList.body?.success, true);
+  assert.ok(Array.isArray(parentList.body?.data));
+  assert.ok(parentList.body.data.some((row) => row.email === parentEmail));
+
+  const studentList = await jsonRequest(`/api/v1/people/students?search=${encodeURIComponent(studentCode)}`, {
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+  assert.equal(studentList.status, 200, JSON.stringify(studentList.body));
+  assert.equal(studentList.body?.success, true);
+  assert.ok(studentList.body.data.some((row) => row.student_code === studentCode));
+});
+
 test("student bulk import preview and execute flow works", async () => {
   const adminToken = await login("admin@agora.com", "admin123");
   const suffix = crypto.randomUUID().slice(0, 8).toUpperCase();
@@ -481,6 +537,197 @@ test("student bulk import preview and execute flow works", async () => {
   assert.equal(listed.body?.success, true);
   assert.ok(Array.isArray(listed.body?.data));
   assert.ok(listed.body.data.some((row) => row.student_code === studentCode));
+});
+
+test("staff bulk import preview and execute flow works", async () => {
+  const adminToken = await login("admin@agora.com", "admin123");
+  const suffix = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const staffCode = `EMP-IMP-${suffix}`;
+  const staffEmail = `import.staff.${suffix.toLowerCase()}@agora.com`;
+  const staffPhone = `+9230${suffix.replace(/[^0-9]/g, "").padEnd(8, "7").slice(0, 8)}`;
+  const section = await pool.query(
+    `
+      SELECT code
+      FROM school_sections
+      WHERE school_id = $1
+      ORDER BY created_at ASC
+      LIMIT 1
+    `,
+    [SCHOOL_ID]
+  );
+  const sectionCode = section.rows[0]?.code || "";
+
+  const csvRows = [
+    [
+      "staff code",
+      "first name",
+      "last name",
+      "email",
+      "phone",
+      "staff type",
+      "role code",
+      "designation",
+      "joining date",
+      "employment status",
+      "primary section code",
+    ],
+    [
+      staffCode,
+      "Imported",
+      "Teacher",
+      staffEmail,
+      staffPhone,
+      "teacher",
+      "teacher",
+      "Math Teacher",
+      "2026-02-01",
+      "active",
+      sectionCode,
+    ],
+  ];
+
+  const csvText = `${csvRows.map((row) => row.join(",")).join("\n")}\n`;
+  const fileBase64 = Buffer.from(csvText, "utf8").toString("base64");
+
+  const preview = await jsonRequest("/api/v1/people/imports/staff/preview", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({
+      source_file_name: `staff-${suffix}.csv`,
+      source_format: "csv",
+      file_base64: fileBase64,
+      import_type: "staff",
+    }),
+  });
+
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body?.success, true);
+  assert.equal(preview.body?.data?.valid_rows, 1);
+  assert.equal(preview.body?.data?.invalid_rows, 0);
+  assert.ok(preview.body?.data?.id);
+
+  const execute = await jsonRequest(
+    `/api/v1/people/imports/jobs/${preview.body.data.id}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({}),
+    }
+  );
+
+  assert.equal(execute.status, 200, JSON.stringify(execute.body));
+  assert.equal(execute.body?.success, true);
+  assert.equal(execute.body?.data?.imported_count, 1);
+  assert.match(String(execute.body?.data?.status || ""), /^completed/);
+
+  const listed = await jsonRequest(`/api/v1/people/staff?search=${encodeURIComponent(staffCode)}`, {
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.equal(listed.body?.success, true);
+  assert.ok(Array.isArray(listed.body?.data));
+  assert.ok(listed.body.data.some((row) => row.staff_code === staffCode));
+});
+
+test("parent bulk import preview and execute flow works", async () => {
+  const adminToken = await login("admin@agora.com", "admin123");
+  const suffix = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const parentEmail = `import.parent.${suffix.toLowerCase()}@agora.com`;
+  const parentPhone = `+9230${suffix.replace(/[^0-9]/g, "").padEnd(8, "8").slice(0, 8)}`;
+  const parentWhatsapp = `+9231${suffix.replace(/[^0-9]/g, "").padEnd(8, "9").slice(0, 8)}`;
+  const student = await pool.query(
+    `
+      SELECT student_code
+      FROM students
+      WHERE school_id = $1
+      ORDER BY created_at ASC
+      LIMIT 1
+    `,
+    [SCHOOL_ID]
+  );
+  const studentCode = student.rows[0]?.student_code;
+  assert.ok(studentCode);
+
+  const csvRows = [
+    [
+      "parent full name",
+      "email",
+      "phone",
+      "whatsapp number",
+      "student codes",
+      "relation",
+      "preferred channel",
+    ],
+    [
+      "Imported Parent",
+      parentEmail,
+      parentPhone,
+      parentWhatsapp,
+      studentCode,
+      "father",
+      "in_app",
+    ],
+  ];
+
+  const csvText = `${csvRows.map((row) => row.join(",")).join("\n")}\n`;
+  const fileBase64 = Buffer.from(csvText, "utf8").toString("base64");
+
+  const preview = await jsonRequest("/api/v1/people/imports/parents/preview", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({
+      source_file_name: `parents-${suffix}.csv`,
+      source_format: "csv",
+      file_base64: fileBase64,
+      import_type: "parents",
+    }),
+  });
+
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body?.success, true);
+  assert.equal(preview.body?.data?.valid_rows, 1);
+  assert.equal(preview.body?.data?.invalid_rows, 0);
+  assert.ok(preview.body?.data?.id);
+
+  const execute = await jsonRequest(
+    `/api/v1/people/imports/jobs/${preview.body.data.id}/execute`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({}),
+    }
+  );
+
+  assert.equal(execute.status, 200, JSON.stringify(execute.body));
+  assert.equal(execute.body?.success, true);
+  assert.equal(execute.body?.data?.imported_count, 1);
+  assert.match(String(execute.body?.data?.status || ""), /^completed/);
+
+  const listed = await jsonRequest(`/api/v1/people/parents?search=${encodeURIComponent(parentEmail)}`, {
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+
+  assert.equal(listed.status, 200, JSON.stringify(listed.body));
+  assert.equal(listed.body?.success, true);
+  assert.ok(Array.isArray(listed.body?.data));
+  assert.ok(listed.body.data.some((row) => row.email === parentEmail));
 });
 
 test("headmistress section dashboard returns section-scoped detail payload", async () => {

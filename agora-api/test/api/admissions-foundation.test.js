@@ -73,6 +73,7 @@ async function waitForAuditAction(action, entityId, attempts = 15) {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260308_admissions_foundation.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
 
@@ -111,6 +112,41 @@ test("admissions role guards and inquiry creation are enforced", async () => {
     headers: { Authorization: `Bearer ${viceToken}` },
   });
   assert.equal(vicePipeline.status, 200, JSON.stringify(vicePipeline.body));
+
+  const filteredPipeline = await jsonRequest(
+    `/api/v1/admissions/pipeline?academic_year_id=${ACADEMIC_YEAR_ID}&date_from=2025-01-01&date_to=2030-01-01&limit_per_stage=10`,
+    {
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(filteredPipeline.status, 200, JSON.stringify(filteredPipeline.body));
+  assert.equal(filteredPipeline.body?.success, true);
+  assert.ok(filteredPipeline.body?.data?.stages);
+
+  const invalidPipelineRange = await jsonRequest(
+    "/api/v1/admissions/pipeline?date_from=2030-01-01&date_to=2025-01-01",
+    {
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(invalidPipelineRange.status, 422, JSON.stringify(invalidPipelineRange.body));
+
+  const filteredApplications = await jsonRequest(
+    `/api/v1/admissions/applications?academic_year_id=${ACADEMIC_YEAR_ID}&date_from=2025-01-01&date_to=2030-01-01&page=1&page_size=10`,
+    {
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(filteredApplications.status, 200, JSON.stringify(filteredApplications.body));
+  assert.equal(filteredApplications.body?.success, true);
+
+  const invalidApplicationsRange = await jsonRequest(
+    "/api/v1/admissions/applications?date_from=2030-01-01&date_to=2025-01-01",
+    {
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(invalidApplicationsRange.status, 422, JSON.stringify(invalidApplicationsRange.body));
 
   const accountantPipelineDenied = await jsonRequest("/api/v1/admissions/pipeline", {
     headers: { Authorization: `Bearer ${accountantToken}` },

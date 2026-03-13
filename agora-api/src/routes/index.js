@@ -22,6 +22,18 @@ const timetableRouter = require("./timetable");
 const disciplineRouter = require("./discipline");
 const hrRouter = require("./hr");
 const documentsRouter = require("./documents");
+const classTeacherRouter = require("./class-teacher");
+const examTermsRouter = require("./exam-terms");
+const reportCardsRouter = require("./report-cards");
+const gradingScalesRouter = require("./grading-scales");
+const subscriptionsRouter = require("./subscriptions");
+const analyticsRouter = require("./analytics");
+const branchesRouter = require("./branches");
+const portalRouter = require("./portal");
+const transportRouter = require("./transport");
+const libraryRouter = require("./library");
+const tutorRouter = require("./tutor");
+const mobileRouter = require("./mobile");
 
 const router = express.Router();
 
@@ -48,5 +60,17 @@ router.use(timetableRouter);
 router.use(disciplineRouter);
 router.use(hrRouter);
 router.use(documentsRouter);
+router.use("/class-teacher", classTeacherRouter);
+router.use("/exam-terms", examTermsRouter);
+router.use("/report-cards", reportCardsRouter);
+router.use("/grading-scales", gradingScalesRouter);
+router.use("/subscriptions", subscriptionsRouter);
+router.use("/analytics", analyticsRouter);
+router.use("/branches", branchesRouter);
+router.use("/portal", portalRouter);
+router.use("/transport", transportRouter);
+router.use("/library", libraryRouter);
+router.use("/tutor", tutorRouter);
+router.use("/mobile", mobileRouter);
 
 module.exports = router;

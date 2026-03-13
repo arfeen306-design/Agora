@@ -124,6 +124,7 @@ async function waitForAudit(action, entityId, actorUserId, attempts = 20) {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
   await runSqlFile("database/migrations/20260308_hr_payroll_foundation.sql");
 
@@ -320,4 +321,48 @@ test("payroll payment update is audited", async () => {
     USER_ID_ADMIN
   );
   assert.equal(hasAudit, true, "Expected payroll payment update audit event");
+});
+
+test("hr dashboard summary includes staff attendance today breakdown", async () => {
+  const adminToken = await login("admin@agora.com", "admin123");
+
+  const summary = await jsonRequest("/api/v1/people/hr/dashboard/summary", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+
+  assert.equal(summary.status, 200, JSON.stringify(summary.body));
+  assert.equal(summary.body?.success, true);
+  assert.ok(summary.body?.data?.staff_attendance_today);
+  assert.equal(
+    typeof summary.body.data.staff_attendance_today.total_active_staff,
+    "number"
+  );
+  assert.equal(
+    typeof summary.body.data.staff_attendance_today.present_count,
+    "number"
+  );
+  assert.equal(
+    typeof summary.body.data.staff_attendance_today.absent_count,
+    "number"
+  );
+
+  const monthScoped = await jsonRequest("/api/v1/people/hr/dashboard/summary?month=2026-03", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+  assert.equal(monthScoped.status, 200, JSON.stringify(monthScoped.body));
+  assert.equal(monthScoped.body?.data?.month, "2026-03");
+
+  const invalidMonth = await jsonRequest("/api/v1/people/hr/dashboard/summary?month=03-2026", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+    },
+  });
+  assert.equal(invalidMonth.status, 422, JSON.stringify(invalidMonth.body));
 });

@@ -231,3 +231,153 @@
   - `/api/v1/health`
   - `/api/v1/internal/observability/slo` (when `INTERNAL_API_KEY` is set)
 - Docker Compose production file cleaned by removing obsolete `version` field.
+
+### Phase 5: Analytics Depth + Multi-Branch Architecture (Step 30)
+- **Analytics depth** — new `routes/analytics.js`:
+  - `GET /api/v1/analytics/classroom-kpis` — per-classroom attendance/marks/homework KPIs
+  - `GET /api/v1/analytics/teacher-performance` — per-teacher assignment/marking stats
+  - `GET /api/v1/analytics/students-at-risk` — students below configurable thresholds
+  - `GET /api/v1/analytics/targets` — school KPI target config
+  - `PATCH /api/v1/analytics/targets` — update KPI targets
+- **Multi-branch architecture** — new `routes/branches.js`:
+  - `GET /api/v1/branches/groups` — list branch groups
+  - `POST /api/v1/branches/groups` — create branch group (super_admin)
+  - `GET /api/v1/branches/groups/:id` — group detail + member schools
+  - `PATCH /api/v1/branches/groups/:id` — update branch group
+  - `GET /api/v1/branches/groups/:id/analytics` — cross-branch KPI comparison
+  - `POST /api/v1/branches/groups/:id/schools` — add school to group
+  - `DELETE /api/v1/branches/groups/:id/schools/:schoolId` — remove school from group
+- **DB changes**:
+  - Migration: `database/migrations/20260313_phase5_analytics_multi_branch.sql`
+  - New tables: `branch_groups`, `branch_group_admins`
+  - New columns: `schools.kpi_targets` (JSONB), `schools.branch_group_id` (FK)
+  - New role: `branch_group_admin`
+- Routes registered in `routes/index.js`
+
+### Phase 6: Parent/Student Portal + Notification Expansion (Step 31)
+- **Parent/Student Portal** — new `routes/portal.js`:
+  - `GET /api/v1/portal/parent/dashboard` — aggregated parent dashboard
+  - `GET /api/v1/portal/parent/children` — linked students
+  - `GET /api/v1/portal/parent/child/:studentId/attendance` — child attendance
+  - `GET /api/v1/portal/parent/child/:studentId/academics` — child marks
+  - `GET /api/v1/portal/parent/child/:studentId/homework` — child homework
+  - `GET /api/v1/portal/parent/child/:studentId/fees` — child fee invoices
+  - `GET /api/v1/portal/student/dashboard` — aggregated student dashboard
+  - `GET /api/v1/portal/student/timetable` — student timetable
+- **Notification Expansion** — added to `routes/notifications.js`:
+  - `GET /api/v1/notifications/scheduled` — list scheduled notifications
+  - `POST /api/v1/notifications/scheduled` — create scheduled notification
+  - `DELETE /api/v1/notifications/scheduled/:id` — cancel scheduled notification
+  - `POST /api/v1/notifications/bulk` — bulk send (role/classroom/all)
+  - `GET /api/v1/notifications/preferences` — user notification preferences
+  - `PATCH /api/v1/notifications/preferences` — update preferences
+  - WhatsApp channel support added to all notification schemas
+- **DB changes**:
+  - Migration: `database/migrations/20260313_phase6_notifications_portal.sql`
+  - New tables: `scheduled_notifications`, `notification_preferences`
+  - Updated enum: `notification_channel` += `whatsapp`
+- Portal router registered in `routes/index.js`
+
+### Phase 7: Transport, Library & Teacher Leave Self-Service (Step 32)
+- **Transport Management** — new `routes/transport.js`:
+  - Routes CRUD (list/create/update/deactivate)
+  - Stops management (list/add/remove per route)
+  - Vehicles CRUD (list/register/update)
+  - Student-route assignments (list/assign/deactivate)
+  - Roles: `school_admin`, `transport_admin`
+- **Library Management** — new `routes/library.js`:
+  - Book catalog CRUD (browse/search/detail/add/update/remove)
+  - Issue/return workflow with transactional copy tracking
+  - Transactions list, overdue report, member history
+  - Library dashboard stats
+  - Roles: `school_admin`, `librarian`
+- **Teacher Leave Self-Service** — added to `routes/hr.js`:
+  - `GET /api/v1/people/hr/my/leave-balance` — own leave balance by type
+  - `POST /api/v1/people/hr/my/leave-requests` — submit leave request
+  - `GET /api/v1/people/hr/my/leave-requests` — view own requests
+  - `DELETE /api/v1/people/hr/my/leave-requests/:id` — cancel pending
+  - `PATCH /api/v1/people/hr/leave-requests/:id/approve` — admin approve/reject
+- **DB changes**:
+  - Migration: `database/migrations/20260313_phase7_transport_library_leave.sql`
+  - New tables: `transport_routes`, `transport_stops`, `transport_vehicles`, `transport_assignments`, `library_books`, `library_transactions`, `leave_requests`
+  - New roles: `transport_admin`, `librarian`
+- Transport + library routers registered in `routes/index.js`
+
+### Phase 7: AI Tutor Infrastructure (Step 33)
+- **AI Engine** — new `services/ai-engine.js`:
+  - Context building (student grade, subject, recent marks, curriculum data)
+  - OpenAI chat integration with lazy-loaded client
+  - Token budget enforcement per school (monthly cap)
+  - Session summarization via AI
+  - Dev-mode mock response generator (no API key required)
+- **Tutor API** — new `routes/tutor.js`:
+  - `POST /api/v1/tutor/sessions` — start tutoring session
+  - `GET /api/v1/tutor/sessions` — list own sessions
+  - `GET /api/v1/tutor/sessions/:id` — session detail with messages
+  - `POST /api/v1/tutor/sessions/:id/messages` — send message & get AI response
+  - `POST /api/v1/tutor/sessions/:id/close` — close & summarize session
+  - `GET /api/v1/tutor/history` — student/parent history & stats
+  - `GET /api/v1/tutor/usage` — admin usage dashboard
+  - `GET /api/v1/tutor/config` — get school tutor config
+  - `PATCH /api/v1/tutor/config` — update tutor settings
+  - `GET /api/v1/tutor/insights/:studentId` — teacher learning insights
+- **DB changes**:
+  - Migration: `database/migrations/20260313_phase7_ai_tutor.sql`
+  - New tables: `tutor_configs`, `tutor_sessions`, `tutor_messages`, `tutor_contexts`, `tutor_usage_logs`
+  - Config already in `config.js` (`ai.apiKey`, `ai.model`, `ai.tokenBudgetPerSchool`)
+- Tutor router registered in `routes/index.js`
+
+### Phase 8: Mobile App Features (Step 34)
+- **Mobile API** — new `routes/mobile.js`:
+  - `POST /api/v1/mobile/devices` — register push device (FCM/APNs)
+  - `DELETE /api/v1/mobile/devices` — unregister device
+  - `GET /api/v1/mobile/sync/parent` — parent quick-sync (badge counts)
+  - `GET /api/v1/mobile/sync/student` — student quick-sync (today's data)
+  - `GET /api/v1/mobile/feed` — unified notification + event feed
+  - `GET /api/v1/mobile/child/:id/discipline` — child discipline incidents
+  - `GET /api/v1/mobile/child/:id/transport` — child transport assignment
+  - `GET /api/v1/mobile/child/:id/report-cards` — child report cards
+  - `GET /api/v1/mobile/student/discipline` — own discipline incidents
+  - `GET /api/v1/mobile/student/transport` — own transport assignment
+  - `GET /api/v1/mobile/student/report-cards` — own report cards
+  - `GET /api/v1/mobile/app-check` — app version & maintenance check
+- **DB changes**:
+  - Migration: `database/migrations/20260313_phase8_mobile.sql`
+  - New tables: `user_devices`, `app_configs`
+- Mobile router registered in `routes/index.js`
+
+### Phase 9: Notification System Enhancement (Step 35)
+- **WhatsApp Channel** — added to `services/notification-dispatcher.js`:
+  - `sendWhatsApp()` with webhook/mock pattern
+  - Config: `WHATSAPP_PROVIDER`, `WHATSAPP_WEBHOOK_URL` in `config.js`
+- **Notification Templates** — new `services/notification-templates.js`:
+  - 28 pre-defined templates across 9 categories (attendance, homework, fees, transport, library, tutor, discipline, leave, general)
+  - Variable interpolation with `{{key}}` syntax
+- **Event-Driven Triggers** — new `services/notification-triggers.js`:
+  - `triggerNotification()` — queues with preference checking
+  - `triggerByRole()` — target by role code
+  - `triggerForStudentParents()` — target student's linked parents
+- **New Reminder Jobs** — added to `services/reminder-jobs.js`:
+  - `queueLibraryOverdueReminders()` — overdue library books
+  - `queueLeavePendingReminders()` — pending leave requests > 2 days
+- **Analytics Endpoints** — added to `routes/notifications.js`:
+  - `GET /api/v1/notifications/analytics` — delivery stats by channel, daily volumes
+  - `GET /api/v1/notifications/delivery-log` — detailed delivery log with filters
+  - `GET /api/v1/notifications/templates` — list available templates
+
+### Phase 10: AI Tutor Release — Full Integration (Step 36)
+- **Portal Integration** — `routes/portal.js`:
+  - Student dashboard now includes `tutor_stats` (sessions, active, subjects explored)
+- **Mobile Integration** — `routes/mobile.js`:
+  - Student sync includes `tutor.active_sessions` + `tutor.enabled`
+  - `GET /api/v1/mobile/student/tutor-quick` — student tutor status
+  - `GET /api/v1/mobile/child/:id/tutor-quick` — parent child tutor summary
+- **Notification Triggers** — wired into `routes/tutor.js`:
+  - Session close → parent notification with summary (`tutor.session_summary`)
+  - Budget 80% → admin notification (`tutor.budget_warning`)
+- **Analytics** — new endpoints in `routes/tutor.js`:
+  - `GET /api/v1/tutor/analytics/trends` — daily/weekly/monthly engagement trends
+  - `GET /api/v1/tutor/analytics/leaderboard` — top students + subjects
+- **Admin Moderation** — new endpoints in `routes/tutor.js`:
+  - `GET /api/v1/tutor/admin/sessions` — browse all school sessions (with filters)
+  - `POST /api/v1/tutor/admin/sessions/:id/terminate` — force-close a session

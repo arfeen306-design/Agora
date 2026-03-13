@@ -94,9 +94,9 @@ export default function InstitutionPage() {
       const [profileData, sectionRes, classroomRes, staffData, sectionLookup, yearLookup] = await Promise.all([
         getInstitutionProfile(),
         getInstitutionSections({ page_size: "80" }),
-        getInstitutionClassrooms({ page_size: "120" }),
-        getLookupStaff({ page_size: 200 }),
-        getLookupSections({ page_size: 200 }),
+        getInstitutionClassrooms({ page_size: "100" }),
+        getLookupStaff({ page_size: 100 }),
+        getLookupSections({ page_size: 100 }),
         getLookupAcademicYears({ page_size: 30 }),
       ]);
 

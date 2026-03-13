@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
+import SavedViewsPanel from "@/components/filters/SavedViewsPanel";
 import { useAuth } from "@/lib/auth";
 import {
   getFeePlans,
@@ -9,9 +11,17 @@ import {
   getFeeInvoices,
   createFeeInvoice,
   recordPayment,
+  getLookupAcademicYears,
   getLookupStudents,
   type LookupStudent,
 } from "@/lib/api";
+import {
+  buildShareUrl,
+  loadSavedFilterViews,
+  persistSavedFilterViews,
+  type SavedFilterView,
+  upsertSavedView,
+} from "@/lib/saved-views";
 
 interface FeePlan {
   id: string;
@@ -32,16 +42,31 @@ interface FeeInvoice {
   status: string;
 }
 
+const FEE_FILTERS_KEY = "agora_web_fees_filters_v1";
+const FEE_SAVED_VIEW_KEY = "agora_web_fees_saved_view_v1";
+const FEE_SAVED_VIEWS_KEY = "agora_web_fees_saved_views_v1";
+const defaultInvoiceFilters = {
+  date_from: "",
+  date_to: "",
+  academic_year_id: "",
+  status: "",
+};
+
 export default function FeesPage() {
   const { isAdmin } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<"plans" | "invoices">("invoices");
   const [plans, setPlans] = useState<FeePlan[]>([]);
   const [planOptions, setPlanOptions] = useState<FeePlan[]>([]);
   const [invoices, setInvoices] = useState<FeeInvoice[]>([]);
   const [students, setStudents] = useState<LookupStudent[]>([]);
+  const [academicYears, setAcademicYears] = useState<Array<{ id: string; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [invoiceFilters, setInvoiceFilters] = useState(defaultInvoiceFilters);
 
   // Forms
   const [showPlanForm, setShowPlanForm] = useState(false);
@@ -53,18 +78,24 @@ export default function FeesPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+  const [urlSyncReady, setUrlSyncReady] = useState(false);
+  const [viewMessage, setViewMessage] = useState("");
+  const [savedViews, setSavedViews] = useState<SavedFilterView[]>([]);
 
   const loadInvoiceLookups = useCallback(async () => {
     try {
-      const [studentsData, plansRes] = await Promise.all([
+      const [studentsData, plansRes, yearsData] = await Promise.all([
         getLookupStudents({ page_size: 200 }),
         getFeePlans({ page: "1", page_size: "200", is_active: "true" }),
+        getLookupAcademicYears({ page_size: 100 }),
       ]);
       setStudents(studentsData);
       setPlanOptions(plansRes.data as FeePlan[]);
+      setAcademicYears(yearsData.map((row) => ({ id: row.id, label: row.label || row.name })));
     } catch {
       setStudents([]);
       setPlanOptions([]);
+      setAcademicYears([]);
     }
   }, []);
 
@@ -72,11 +103,22 @@ export default function FeesPage() {
     setLoading(true);
     try {
       if (tab === "plans") {
-        const res = await getFeePlans({ page: String(page), page_size: "20" });
+        const res = await getFeePlans({
+          page: String(page),
+          page_size: "20",
+          ...(invoiceFilters.academic_year_id ? { academic_year_id: invoiceFilters.academic_year_id } : {}),
+        });
         setPlans(res.data as FeePlan[]);
         setTotalPages(res.meta?.pagination?.total_pages ?? 1);
       } else {
-        const res = await getFeeInvoices({ page: String(page), page_size: "20" });
+        const res = await getFeeInvoices({
+          page: String(page),
+          page_size: "20",
+          ...(invoiceFilters.date_from ? { date_from: invoiceFilters.date_from } : {}),
+          ...(invoiceFilters.date_to ? { date_to: invoiceFilters.date_to } : {}),
+          ...(invoiceFilters.academic_year_id ? { academic_year_id: invoiceFilters.academic_year_id } : {}),
+          ...(invoiceFilters.status ? { status: invoiceFilters.status } : {}),
+        });
         setInvoices(res.data as FeeInvoice[]);
         setTotalPages(res.meta?.pagination?.total_pages ?? 1);
       }
@@ -86,7 +128,7 @@ export default function FeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page]);
+  }, [tab, page, invoiceFilters.academic_year_id, invoiceFilters.date_from, invoiceFilters.date_to, invoiceFilters.status]);
 
   useEffect(() => {
     loadData();
@@ -95,6 +137,154 @@ export default function FeesPage() {
   useEffect(() => {
     loadInvoiceLookups();
   }, [loadInvoiceLookups]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    const existingViews = loadSavedFilterViews(FEE_SAVED_VIEWS_KEY, FEE_SAVED_VIEW_KEY);
+    setSavedViews(existingViews);
+    if (!params.toString()) {
+      const latestView = existingViews[0];
+      if (latestView?.query) {
+        const savedParams = new URLSearchParams(latestView.query);
+        setInvoiceFilters({
+          date_from: savedParams.get("date_from") || "",
+          date_to: savedParams.get("date_to") || "",
+          academic_year_id: savedParams.get("academic_year_id") || "",
+          status: savedParams.get("status") || "",
+        });
+        setUrlSyncReady(true);
+        return;
+      }
+      try {
+        const saved = localStorage.getItem(FEE_FILTERS_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved) as typeof defaultInvoiceFilters;
+          setInvoiceFilters({
+            date_from: parsed.date_from || "",
+            date_to: parsed.date_to || "",
+            academic_year_id: parsed.academic_year_id || "",
+            status: parsed.status || "",
+          });
+          setUrlSyncReady(true);
+          return;
+        }
+      } catch {
+        // ignore parse/localStorage errors
+      }
+    }
+
+    setInvoiceFilters({
+      date_from: params.get("date_from") || "",
+      date_to: params.get("date_to") || "",
+      academic_year_id: params.get("academic_year_id") || "",
+      status: params.get("status") || "",
+    });
+    setUrlSyncReady(true);
+  }, [searchParams]);
+
+  const buildCurrentQuery = useCallback(() => {
+    const params = new URLSearchParams();
+    if (invoiceFilters.date_from) params.set("date_from", invoiceFilters.date_from);
+    if (invoiceFilters.date_to) params.set("date_to", invoiceFilters.date_to);
+    if (invoiceFilters.academic_year_id) params.set("academic_year_id", invoiceFilters.academic_year_id);
+    if (invoiceFilters.status) params.set("status", invoiceFilters.status);
+    return params.toString();
+  }, [invoiceFilters.date_from, invoiceFilters.date_to, invoiceFilters.academic_year_id, invoiceFilters.status]);
+
+  useEffect(() => {
+    if (!urlSyncReady) return;
+    setViewMessage("");
+    const next = buildCurrentQuery();
+    const current = searchParams.toString();
+    if (next === current) return;
+    router.replace(`${pathname}${next ? `?${next}` : ""}`, { scroll: false });
+  }, [buildCurrentQuery, pathname, router, searchParams, urlSyncReady]);
+
+  useEffect(() => {
+    if (!urlSyncReady) return;
+    localStorage.setItem(FEE_FILTERS_KEY, JSON.stringify(invoiceFilters));
+  }, [invoiceFilters, urlSyncReady]);
+
+  const hasActiveFilters = Object.values(invoiceFilters).some((value) => value.trim() !== "");
+  const activeFilters = [
+    invoiceFilters.date_from
+      ? {
+          key: "date_from",
+          label: `From: ${invoiceFilters.date_from}`,
+          clear: () => setInvoiceFilters((prev) => ({ ...prev, date_from: "" })),
+        }
+      : null,
+    invoiceFilters.date_to
+      ? { key: "date_to", label: `To: ${invoiceFilters.date_to}`, clear: () => setInvoiceFilters((prev) => ({ ...prev, date_to: "" })) }
+      : null,
+    invoiceFilters.academic_year_id
+      ? {
+          key: "academic_year_id",
+          label: `Academic Year: ${
+            academicYears.find((year) => year.id === invoiceFilters.academic_year_id)?.label || invoiceFilters.academic_year_id
+          }`,
+          clear: () => setInvoiceFilters((prev) => ({ ...prev, academic_year_id: "" })),
+        }
+      : null,
+    invoiceFilters.status
+      ? { key: "status", label: `Status: ${invoiceFilters.status}`, clear: () => setInvoiceFilters((prev) => ({ ...prev, status: "" })) }
+      : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; clear: () => void }>;
+
+  function clearAllFilters() {
+    setPage(1);
+    setInvoiceFilters(defaultInvoiceFilters);
+    setViewMessage("");
+  }
+
+  function saveCurrentView() {
+    const query = buildCurrentQuery();
+    if (!query) {
+      setViewMessage("Add at least one filter before saving a view.");
+      return;
+    }
+    try {
+      const nextViews = upsertSavedView(savedViews, query, "Fee View");
+      setSavedViews(nextViews);
+      persistSavedFilterViews(FEE_SAVED_VIEWS_KEY, nextViews, FEE_SAVED_VIEW_KEY);
+      localStorage.setItem(FEE_FILTERS_KEY, JSON.stringify(invoiceFilters));
+      setViewMessage("Saved view added.");
+    } catch {
+      setViewMessage("Unable to save view on this browser.");
+    }
+  }
+
+  async function copyCurrentLink() {
+    const url = buildShareUrl(pathname, buildCurrentQuery());
+    try {
+      await navigator.clipboard.writeText(url);
+      setViewMessage("Current link copied.");
+    } catch {
+      setViewMessage("Unable to copy link.");
+    }
+  }
+
+  async function copySavedViewLink(view: SavedFilterView) {
+    const url = buildShareUrl(pathname, view.query);
+    try {
+      await navigator.clipboard.writeText(url);
+      setViewMessage("Saved view link copied.");
+    } catch {
+      setViewMessage("Unable to copy link.");
+    }
+  }
+
+  function applySavedView(view: SavedFilterView) {
+    router.replace(`${pathname}?${view.query}`, { scroll: false });
+    setViewMessage(`Applied "${view.name}".`);
+  }
+
+  function deleteSavedView(viewId: string) {
+    const nextViews = savedViews.filter((view) => view.id !== viewId);
+    setSavedViews(nextViews);
+    persistSavedFilterViews(FEE_SAVED_VIEWS_KEY, nextViews, FEE_SAVED_VIEW_KEY);
+    setViewMessage("Saved view removed.");
+  }
 
   async function handleCreatePlan() {
     if (!planForm.title || !planForm.amount) return;
@@ -190,6 +380,11 @@ export default function FeesPage() {
             {message}
           </div>
         )}
+        {viewMessage && (
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+            {viewMessage}
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 border-b border-gray-200">
@@ -199,6 +394,103 @@ export default function FeesPage() {
           <button className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === "plans" ? "border-primary-600 text-primary-600" : "border-transparent text-gray-500 hover:text-gray-700"}`} onClick={() => { setTab("plans"); setPage(1); }}>
             Fee Plans
           </button>
+        </div>
+
+        <div className="card mb-6">
+          <h3 className="mb-4 text-lg font-semibold text-gray-900">Invoice Filters</h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <div>
+              <label className="label-text">Date From</label>
+              <input
+                type="date"
+                className="input-field"
+                aria-label="Date From"
+                value={invoiceFilters.date_from}
+                onChange={(e) => {
+                  setPage(1);
+                  setInvoiceFilters((prev) => ({ ...prev, date_from: e.target.value }));
+                }}
+              />
+            </div>
+            <div>
+              <label className="label-text">Date To</label>
+              <input
+                type="date"
+                className="input-field"
+                aria-label="Date To"
+                value={invoiceFilters.date_to}
+                onChange={(e) => {
+                  setPage(1);
+                  setInvoiceFilters((prev) => ({ ...prev, date_to: e.target.value }));
+                }}
+              />
+            </div>
+            <div>
+              <label className="label-text">Academic Year</label>
+              <select
+                className="input-field"
+                aria-label="Academic Year"
+                value={invoiceFilters.academic_year_id}
+                onChange={(e) => {
+                  setPage(1);
+                  setInvoiceFilters((prev) => ({ ...prev, academic_year_id: e.target.value }));
+                }}
+              >
+                <option value="">All Academic Years</option>
+                {academicYears.map((year) => (
+                  <option key={year.id} value={year.id}>
+                    {year.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label-text">Invoice Status</label>
+              <select
+                className="input-field"
+                aria-label="Invoice Status"
+                value={invoiceFilters.status}
+                onChange={(e) => {
+                  setPage(1);
+                  setInvoiceFilters((prev) => ({ ...prev, status: e.target.value }));
+                }}
+              >
+                <option value="">All</option>
+                <option value="draft">Draft</option>
+                <option value="issued">Issued</option>
+                <option value="partial">Partial</option>
+                <option value="paid">Paid</option>
+                <option value="overdue">Overdue</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button className="btn-secondary w-full" onClick={clearAllFilters}>Clear all</button>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {hasActiveFilters &&
+              activeFilters.map((filter) => (
+                <button
+                  key={filter.key}
+                  className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"
+                  onClick={filter.clear}
+                  type="button"
+                >
+                  {filter.label} ×
+                </button>
+              ))}
+          </div>
+          <SavedViewsPanel
+            title="Saved Fee Views"
+            views={savedViews}
+            onSaveCurrent={saveCurrentView}
+            onCopyCurrent={copyCurrentLink}
+            onApply={applySavedView}
+            onCopy={copySavedViewLink}
+            onDelete={deleteSavedView}
+            emptyText="Save fee filters to reopen overdue and collection views quickly."
+          />
         </div>
 
         {/* Fee Plans Tab */}

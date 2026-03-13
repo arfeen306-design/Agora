@@ -95,6 +95,17 @@ async function sendSms(notification, config) {
   return sendMock({ channel: "sms", notification });
 }
 
+async function sendWhatsApp(notification, config) {
+  if (config.notifications.whatsapp?.provider === "webhook") {
+    return sendToWebhook({
+      webhookUrl: config.notifications.whatsapp.webhookUrl,
+      channel: "whatsapp",
+      notification,
+    });
+  }
+  return sendMock({ channel: "whatsapp", notification });
+}
+
 async function dispatchNotification(notification, config) {
   if (notification.channel === "in_app") {
     return {
@@ -113,6 +124,10 @@ async function dispatchNotification(notification, config) {
 
   if (notification.channel === "sms") {
     return sendSms(notification, config);
+  }
+
+  if (notification.channel === "whatsapp") {
+    return sendWhatsApp(notification, config);
   }
 
   throw new AppError(422, "VALIDATION_ERROR", `Unsupported notification channel: ${notification.channel}`);

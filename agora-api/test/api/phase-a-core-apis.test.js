@@ -306,6 +306,7 @@ async function waitForAuditActionByActor(action, actorUserId, attempts = 12) {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
   await seedPhaseAFixtures();
 
@@ -395,6 +396,22 @@ test("fees role matrix is enforced and parent invoices stay scoped", async () =>
     headers: { Authorization: `Bearer ${viceToken}` },
   });
   assert.equal(viceInvoices.status, 200, JSON.stringify(viceInvoices.body));
+
+  const viceInvoicesByAcademicYear = await jsonRequest(
+    `/api/v1/fees/invoices?page=1&page_size=50&academic_year_id=${ACADEMIC_YEAR_CURRENT}`,
+    {
+      headers: { Authorization: `Bearer ${viceToken}` },
+    }
+  );
+  assert.equal(viceInvoicesByAcademicYear.status, 200, JSON.stringify(viceInvoicesByAcademicYear.body));
+
+  const invalidInvoiceListRange = await jsonRequest(
+    "/api/v1/fees/invoices?page=1&page_size=20&date_from=2026-03-10&date_to=2026-03-01",
+    {
+      headers: { Authorization: `Bearer ${viceToken}` },
+    }
+  );
+  assert.equal(invalidInvoiceListRange.status, 422, JSON.stringify(invalidInvoiceListRange.body));
 
   const invalidInvoiceRange = await jsonRequest("/api/v1/fees/invoices", {
     method: "POST",
@@ -585,6 +602,35 @@ test("reports role matrix and scoping rules are aligned", async () => {
     headers: { Authorization: `Bearer ${parentToken}` },
   });
   assert.equal(parentAcademic.status, 200, JSON.stringify(parentAcademic.body));
+
+  const principalExecutiveOverview = await jsonRequest("/api/v1/reports/executive/overview", {
+    headers: { Authorization: `Bearer ${principalToken}` },
+  });
+  assert.equal(principalExecutiveOverview.status, 200, JSON.stringify(principalExecutiveOverview.body));
+  assert.ok(principalExecutiveOverview.body?.data?.kpis);
+
+  const principalExecutiveFiltered = await jsonRequest(
+    `/api/v1/reports/executive/overview?academic_year_id=${ACADEMIC_YEAR_CURRENT}&date_from=2025-08-01&date_to=2026-12-31&trend_points=8`,
+    {
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(principalExecutiveFiltered.status, 200, JSON.stringify(principalExecutiveFiltered.body));
+  assert.equal(principalExecutiveFiltered.body?.data?.window?.date_from, "2025-08-01");
+  assert.equal(principalExecutiveFiltered.body?.data?.window?.date_to, "2026-12-31");
+
+  const invalidExecutiveRange = await jsonRequest(
+    "/api/v1/reports/executive/overview?date_from=2026-12-31&date_to=2026-01-01",
+    {
+      headers: { Authorization: `Bearer ${principalToken}` },
+    }
+  );
+  assert.equal(invalidExecutiveRange.status, 422, JSON.stringify(invalidExecutiveRange.body));
+
+  const teacherExecutiveDenied = await jsonRequest("/api/v1/reports/executive/overview", {
+    headers: { Authorization: `Bearer ${teacherToken}` },
+  });
+  assert.equal(teacherExecutiveDenied.status, 403, JSON.stringify(teacherExecutiveDenied.body));
 });
 
 test("marks endpoints allow leadership read access with role scoping", async () => {
@@ -731,6 +777,27 @@ test("people detail endpoints, parent CRUD, timeline, and academic summary work 
   });
   assert.equal(teacherSummary.status, 200, JSON.stringify(teacherSummary.body));
   assert.equal(teacherSummary.body?.data?.fee_summary, null);
+
+  const parentLinkedStudents = await jsonRequest("/api/v1/people/me/students", {
+    headers: { Authorization: `Bearer ${parentToken}` },
+  });
+  assert.equal(parentLinkedStudents.status, 200, JSON.stringify(parentLinkedStudents.body));
+  assert.ok(Array.isArray(parentLinkedStudents.body?.data));
+  assert.ok(parentLinkedStudents.body.data.some((row) => row.id === STUDENT_1));
+  assert.ok(parentLinkedStudents.body.data.every((row) => typeof row.full_name === "string"));
+
+  const studentSelfLinked = await jsonRequest("/api/v1/people/me/students", {
+    headers: { Authorization: `Bearer ${studentToken}` },
+  });
+  assert.equal(studentSelfLinked.status, 200, JSON.stringify(studentSelfLinked.body));
+  assert.ok(Array.isArray(studentSelfLinked.body?.data));
+  assert.ok(studentSelfLinked.body.data.length >= 1);
+  assert.ok(studentSelfLinked.body.data.some((row) => row.id === STUDENT_1));
+
+  const teacherSelfLinkedDenied = await jsonRequest("/api/v1/people/me/students", {
+    headers: { Authorization: `Bearer ${teacherToken}` },
+  });
+  assert.equal(teacherSelfLinkedDenied.status, 403, JSON.stringify(teacherSelfLinkedDenied.body));
 });
 
 test("academic year activation keeps exactly one current year and is audited", async () => {

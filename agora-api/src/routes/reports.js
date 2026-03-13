@@ -49,6 +49,23 @@ const feesExportFilterSchema = feesFilterSchema.extend({
   format: csvOrPdfSchema.default("csv"),
 });
 
+const executiveOverviewQuerySchema = z
+  .object({
+    date_from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    date_to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    academic_year_id: z.string().uuid().optional(),
+    classroom_id: z.string().uuid().optional(),
+    section_id: z.string().uuid().optional(),
+    trend_points: z.coerce.number().int().min(4).max(24).default(12),
+  })
+  .strict();
+
 function parseSchema(schema, input, message = "Invalid request input") {
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
@@ -115,6 +132,13 @@ function ensureFeesReportExportRole(auth) {
     return;
   }
   throw new AppError(403, "FORBIDDEN", "No fees export access for this role");
+}
+
+function ensureExecutiveReportReadRole(auth) {
+  if (hasRole(auth, "school_admin") || hasRole(auth, "principal") || hasRole(auth, "vice_principal")) {
+    return;
+  }
+  throw new AppError(403, "FORBIDDEN", "No executive analytics access for this role");
 }
 
 function auditReportExport({ auth, actorUserId, reportType, format, rowCount, filters }) {
@@ -241,6 +265,26 @@ function parseNumeric(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeExecutiveWindow(query) {
+  const now = new Date();
+  const safeTo = query.date_to ? new Date(`${query.date_to}T00:00:00.000Z`) : now;
+  const safeFrom = query.date_from
+    ? new Date(`${query.date_from}T00:00:00.000Z`)
+    : new Date(safeTo.getTime() - 1000 * 60 * 60 * 24 * 84);
+
+  if (Number.isNaN(safeFrom.getTime()) || Number.isNaN(safeTo.getTime())) {
+    throw new AppError(422, "VALIDATION_ERROR", "Invalid executive analytics date range");
+  }
+  if (safeFrom.getTime() > safeTo.getTime()) {
+    throw new AppError(422, "VALIDATION_ERROR", "date_from must be on or before date_to");
+  }
+
+  return {
+    from: safeFrom.toISOString().slice(0, 10),
+    to: safeTo.toISOString().slice(0, 10),
+  };
+}
+
 async function sendExportFile({
   res,
   reportKey,
@@ -264,6 +308,346 @@ async function sendExportFile({
   res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
   return res.status(200).send(buffer);
 }
+
+router.get(
+  "/reports/executive/overview",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    ensureExecutiveReportReadRole(req.auth);
+    const query = parseSchema(executiveOverviewQuerySchema, req.query, "Invalid executive overview query");
+    const window = normalizeExecutiveWindow(query);
+
+    const scopedParams = [req.auth.schoolId, window.from, window.to];
+    const scopedWhere = [
+      "c.school_id = $1",
+      "DATE(source_date) >= $2::date",
+      "DATE(source_date) <= $3::date",
+    ];
+
+    if (query.classroom_id) {
+      scopedParams.push(query.classroom_id);
+      scopedWhere.push(`c.id = $${scopedParams.length}`);
+    }
+    if (query.section_id) {
+      scopedParams.push(query.section_id);
+      scopedWhere.push(`c.section_id = $${scopedParams.length}`);
+    }
+    if (query.academic_year_id) {
+      scopedParams.push(query.academic_year_id);
+      scopedWhere.push(`c.academic_year_id = $${scopedParams.length}`);
+    }
+
+    const attendanceTrendResult = await pool.query(
+      `
+        WITH scoped AS (
+          SELECT
+            ar.attendance_date::date AS source_date,
+            ar.status
+          FROM attendance_records ar
+          JOIN classrooms c
+            ON c.id = ar.classroom_id
+           AND c.school_id = ar.school_id
+          WHERE ${scopedWhere
+            .join(" AND ")
+            .replaceAll("source_date", "ar.attendance_date")}
+        )
+        SELECT
+          DATE_TRUNC('week', source_date::timestamp)::date AS period_start,
+          COUNT(*)::int AS total_records,
+          COUNT(*) FILTER (WHERE status = 'present'::attendance_status)::int AS present_count,
+          COUNT(*) FILTER (WHERE status = 'absent'::attendance_status)::int AS absent_count,
+          COUNT(*) FILTER (WHERE status = 'late'::attendance_status)::int AS late_count,
+          COUNT(*) FILTER (WHERE status = 'leave'::attendance_status)::int AS leave_count
+        FROM scoped
+        GROUP BY period_start
+        ORDER BY period_start DESC
+        LIMIT $${scopedParams.length + 1}
+      `,
+      [...scopedParams, query.trend_points]
+    );
+
+    const marksTrendResult = await pool.query(
+      `
+        WITH scoped AS (
+          SELECT
+            COALESCE(a.assessment_date, a.created_at::date)::date AS source_date,
+            (sc.marks_obtained / NULLIF(a.max_marks, 0)) * 100 AS percentage
+          FROM assessments a
+          JOIN assessment_scores sc
+            ON sc.school_id = a.school_id
+           AND sc.assessment_id = a.id
+          JOIN classrooms c
+            ON c.id = a.classroom_id
+           AND c.school_id = a.school_id
+          WHERE ${scopedWhere
+            .join(" AND ")
+            .replaceAll("source_date", "COALESCE(a.assessment_date, a.created_at::date)")}
+        )
+        SELECT
+          DATE_TRUNC('month', source_date::timestamp)::date AS period_start,
+          COUNT(*)::int AS score_count,
+          COALESCE(AVG(percentage), 0)::numeric AS avg_percentage
+        FROM scoped
+        GROUP BY period_start
+        ORDER BY period_start DESC
+        LIMIT $${scopedParams.length + 1}
+      `,
+      [...scopedParams, query.trend_points]
+    );
+
+    const homeworkByClassroomResult = await pool.query(
+      `
+        SELECT
+          c.id AS classroom_id,
+          c.grade_label,
+          c.section_label,
+          COUNT(*)::int AS total_assigned,
+          COUNT(*) FILTER (
+            WHERE COALESCE(hs.status, 'assigned'::homework_submission_status)
+              IN ('submitted'::homework_submission_status, 'reviewed'::homework_submission_status)
+          )::int AS completed_count
+        FROM homework h
+        JOIN classrooms c
+          ON c.id = h.classroom_id
+         AND c.school_id = h.school_id
+        JOIN student_enrollments se
+          ON se.school_id = h.school_id
+         AND se.classroom_id = h.classroom_id
+         AND se.status = 'active'
+        LEFT JOIN homework_submissions hs
+          ON hs.school_id = h.school_id
+         AND hs.homework_id = h.id
+         AND hs.student_id = se.student_id
+        WHERE ${scopedWhere
+          .join(" AND ")
+          .replaceAll("source_date", "h.assigned_at::date")}
+        GROUP BY c.id, c.grade_label, c.section_label
+        ORDER BY total_assigned DESC
+        LIMIT 10
+      `,
+      scopedParams
+    );
+
+    const feeAgingResult = await pool.query(
+      `
+        WITH scoped AS (
+          SELECT
+            fi.id,
+            fi.due_date,
+            GREATEST(fi.amount_due - fi.amount_paid, 0) AS outstanding_amount
+          FROM fee_invoices fi
+          LEFT JOIN LATERAL (
+            SELECT se.classroom_id
+            FROM student_enrollments se
+            WHERE se.school_id = fi.school_id
+              AND se.student_id = fi.student_id
+              AND se.status = 'active'
+            ORDER BY se.joined_on DESC NULLS LAST, se.created_at DESC
+            LIMIT 1
+          ) latest_enrollment ON TRUE
+          LEFT JOIN classrooms c
+            ON c.id = latest_enrollment.classroom_id
+           AND c.school_id = fi.school_id
+          WHERE fi.school_id = $1
+            AND fi.period_end >= $2::date - INTERVAL '90 days'
+            AND fi.period_start <= $3::date + INTERVAL '30 days'
+            AND ($4::uuid IS NULL OR c.id = $4::uuid)
+            AND ($5::uuid IS NULL OR c.section_id = $5::uuid)
+        )
+        SELECT
+          COALESCE(SUM(outstanding_amount), 0)::numeric AS outstanding_total,
+          COUNT(*) FILTER (
+            WHERE outstanding_amount > 0
+              AND due_date < CURRENT_DATE
+          )::int AS overdue_invoices,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN outstanding_amount > 0
+                 AND due_date >= CURRENT_DATE
+                THEN outstanding_amount
+                ELSE 0
+              END
+            ),
+            0
+          )::numeric AS current_bucket_total,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN outstanding_amount > 0
+                 AND CURRENT_DATE - due_date BETWEEN 1 AND 30
+                THEN outstanding_amount
+                ELSE 0
+              END
+            ),
+            0
+          )::numeric AS bucket_1_30_total,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN outstanding_amount > 0
+                 AND CURRENT_DATE - due_date BETWEEN 31 AND 60
+                THEN outstanding_amount
+                ELSE 0
+              END
+            ),
+            0
+          )::numeric AS bucket_31_60_total,
+          COALESCE(
+            SUM(
+              CASE
+                WHEN outstanding_amount > 0
+                 AND CURRENT_DATE - due_date > 60
+                THEN outstanding_amount
+                ELSE 0
+              END
+            ),
+            0
+          )::numeric AS bucket_61_plus_total
+        FROM scoped
+      `,
+      [req.auth.schoolId, window.from, window.to, query.classroom_id || null, query.section_id || null]
+    );
+
+    const attendanceTrend = attendanceTrendResult.rows
+      .map((row) => {
+        const total = Number(row.total_records || 0);
+        const present = Number(row.present_count || 0);
+        return {
+          period_start: row.period_start,
+          total_records: total,
+          present_count: present,
+          absent_count: Number(row.absent_count || 0),
+          late_count: Number(row.late_count || 0),
+          leave_count: Number(row.leave_count || 0),
+          present_rate: total > 0 ? Number(((present * 100) / total).toFixed(2)) : 0,
+        };
+      })
+      .reverse();
+
+    const marksTrend = marksTrendResult.rows
+      .map((row) => ({
+        period_start: row.period_start,
+        score_count: Number(row.score_count || 0),
+        avg_percentage: Number(parseNumeric(row.avg_percentage).toFixed(2)),
+      }))
+      .reverse();
+
+    const homeworkByClassroom = homeworkByClassroomResult.rows.map((row) => {
+      const totalAssigned = Number(row.total_assigned || 0);
+      const completed = Number(row.completed_count || 0);
+      return {
+        classroom_id: row.classroom_id,
+        classroom_label: `${row.grade_label || "Grade"} ${row.section_label || ""}`.trim(),
+        total_assigned: totalAssigned,
+        completed_count: completed,
+        completion_rate: totalAssigned > 0 ? Number(((completed * 100) / totalAssigned).toFixed(2)) : 0,
+      };
+    });
+
+    const feeAgingRow = feeAgingResult.rows[0] || {};
+    const feeAging = {
+      outstanding_total: parseNumeric(feeAgingRow.outstanding_total),
+      overdue_invoices: Number(feeAgingRow.overdue_invoices || 0),
+      current_bucket_total: parseNumeric(feeAgingRow.current_bucket_total),
+      bucket_1_30_total: parseNumeric(feeAgingRow.bucket_1_30_total),
+      bucket_31_60_total: parseNumeric(feeAgingRow.bucket_31_60_total),
+      bucket_61_plus_total: parseNumeric(feeAgingRow.bucket_61_plus_total),
+    };
+
+    const attendanceKpi =
+      attendanceTrend.length > 0
+        ? Number(
+            (
+              attendanceTrend.reduce((acc, row) => acc + Number(row.present_rate || 0), 0) / attendanceTrend.length
+            ).toFixed(2)
+          )
+        : 0;
+    const marksKpi =
+      marksTrend.length > 0
+        ? Number((marksTrend.reduce((acc, row) => acc + Number(row.avg_percentage || 0), 0) / marksTrend.length).toFixed(2))
+        : 0;
+
+    const homeworkTotals = homeworkByClassroom.reduce(
+      (acc, row) => {
+        acc.total += Number(row.total_assigned || 0);
+        acc.completed += Number(row.completed_count || 0);
+        return acc;
+      },
+      { total: 0, completed: 0 }
+    );
+    const homeworkKpi =
+      homeworkTotals.total > 0 ? Number(((homeworkTotals.completed * 100) / homeworkTotals.total).toFixed(2)) : 0;
+
+    const alerts = [];
+    if (attendanceKpi > 0 && attendanceKpi < 85) {
+      alerts.push({
+        key: "attendance_rate_low",
+        severity: "warning",
+        message: "Attendance trend is below 85% for the selected window.",
+        value: attendanceKpi,
+      });
+    }
+    if (marksKpi > 0 && marksKpi < 60) {
+      alerts.push({
+        key: "marks_average_low",
+        severity: "critical",
+        message: "Average marks trend is below 60%. Academic interventions are recommended.",
+        value: marksKpi,
+      });
+    }
+    if (homeworkKpi > 0 && homeworkKpi < 70) {
+      alerts.push({
+        key: "homework_completion_low",
+        severity: "warning",
+        message: "Homework completion trend is below 70%.",
+        value: homeworkKpi,
+      });
+    }
+    if (feeAging.outstanding_total > 0) {
+      alerts.push({
+        key: "fee_outstanding",
+        severity: feeAging.bucket_61_plus_total > 0 ? "critical" : "warning",
+        message: "Outstanding fee balance detected.",
+        value: feeAging.outstanding_total,
+      });
+    }
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "reports.executive.overview.viewed",
+      entityName: "reports",
+      metadata: {
+        date_from: window.from,
+        date_to: window.to,
+        academic_year_id: query.academic_year_id || null,
+        classroom_id: query.classroom_id || null,
+        section_id: query.section_id || null,
+      },
+    });
+
+    return success(res, {
+      generated_at: new Date().toISOString(),
+      window: {
+        date_from: window.from,
+        date_to: window.to,
+      },
+      kpis: {
+        attendance_present_rate: attendanceKpi,
+        marks_avg_percentage: marksKpi,
+        homework_completion_rate: homeworkKpi,
+        fee_outstanding_total: feeAging.outstanding_total,
+        fee_overdue_invoices: feeAging.overdue_invoices,
+      },
+      attendance_trend: attendanceTrend,
+      marks_trend: marksTrend,
+      homework_by_classroom: homeworkByClassroom,
+      fee_aging: feeAging,
+      alerts,
+    });
+  })
+);
 
 async function buildAttendanceFilters(auth, query) {
   const params = [auth.schoolId];

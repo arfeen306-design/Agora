@@ -20,10 +20,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool _loading = true;
   String _focusStudentId = '';
+  String _selectedStudentId = '';
+  List<_LinkedStudent> _linkedStudents = [];
 
   int _attendanceToday = 0;
   int _upcomingHomework = 0;
   int _unreadNotifications = 0;
+  String _todayAttendanceStatus = 'pending';
 
   int _presentCount = 0;
   int _absentCount = 0;
@@ -36,11 +39,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double _monthlyTestAverage = 0;
 
   int _totalHomeworkAssigned = 0;
+  int _homeworkDoneCount = 0;
+  int _homeworkPendingCount = 0;
   int _missingHomeworkCount = 0;
   int _assessmentCount = 0;
+  double _participationPulse = 0;
 
   List<_TrendPoint> _trend = [];
   List<_SubjectPoint> _subjects = [];
+  List<_RecentAssessmentPoint> _recentAssessments = [];
+  List<_NotificationPreview> _recentNotifications = [];
+  String _progressLoopMessage = 'Learning pattern will appear after enough records.';
 
   @override
   void initState() {
@@ -83,14 +92,237 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return _asInt(pagination?['total_items']);
   }
 
+  String _progressLoopFromTrend(List<_TrendPoint> trend) {
+    if (trend.length < 4) {
+      return 'Keep consistency in attendance and tests to unlock progress trend.';
+    }
+
+    final safeValues = trend.map((point) => point.value.clamp(0, 100).toDouble()).toList();
+    final latest = safeValues.reversed.take(3).toList();
+    final previous = safeValues.reversed.skip(3).take(3).toList();
+    if (previous.isEmpty || latest.isEmpty) {
+      return 'Progress is stabilizing with current performance.';
+    }
+
+    final latestAvg = latest.reduce((a, b) => a + b) / latest.length;
+    final previousAvg = previous.reduce((a, b) => a + b) / previous.length;
+    final delta = latestAvg - previousAvg;
+
+    if (delta >= 4) {
+      return 'Improving trend: recent tests are stronger than earlier ones.';
+    }
+    if (delta <= -4) {
+      return 'Needs attention: recent scores dipped, plan revision support.';
+    }
+    return 'Stable trend: progress is consistent across recent assessments.';
+  }
+
+  Color _statusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'present':
+        return AgoraTheme.success;
+      case 'late':
+        return AgoraTheme.warning;
+      case 'absent':
+        return AgoraTheme.danger;
+      case 'leave':
+        return AgoraTheme.primaryColor;
+      default:
+        return AgoraTheme.textMuted;
+    }
+  }
+
   Future<void> _loadDashboard() async {
     final now = DateTime.now();
     final today = DateFormat('yyyy-MM-dd').format(now);
+    final authUser = context.read<AuthProvider>().user;
+    final isParentOrStudent = (authUser?.isParent ?? false) || (authUser?.isStudent ?? false);
 
     if (mounted) {
       setState(() {
         _loading = true;
       });
+    }
+
+    if (isParentOrStudent) {
+      final linkedStudentsRes = await _safeGet('/people/me/students');
+      final linkedStudentsRaw = _asList(linkedStudentsRes['data']);
+      final linkedStudents = linkedStudentsRaw
+          .map((item) => _LinkedStudent.fromJson(item as Map<String, dynamic>))
+          .toList();
+
+      String selectedStudentId = _selectedStudentId;
+      if (selectedStudentId.isEmpty ||
+          !linkedStudents.any((student) => student.id == selectedStudentId)) {
+        selectedStudentId = linkedStudents.isNotEmpty ? linkedStudents.first.id : '';
+      }
+
+      if (selectedStudentId.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _linkedStudents = linkedStudents;
+          _selectedStudentId = '';
+          _focusStudentId = '';
+          _attendanceToday = 0;
+          _upcomingHomework = 0;
+          _unreadNotifications = 0;
+          _attendanceRate = 0;
+          _homeworkCompletionRate = 0;
+          _marksAverage = 0;
+          _monthlyTestAverage = 0;
+          _totalHomeworkAssigned = 0;
+          _homeworkDoneCount = 0;
+          _homeworkPendingCount = 0;
+          _missingHomeworkCount = 0;
+          _assessmentCount = 0;
+          _presentCount = 0;
+          _absentCount = 0;
+          _lateCount = 0;
+          _leaveCount = 0;
+          _trend = [];
+          _subjects = [];
+          _recentAssessments = [];
+          _recentNotifications = [];
+          _todayAttendanceStatus = 'pending';
+          _participationPulse = 0;
+          _progressLoopMessage = 'No linked student found for this account.';
+          _loading = false;
+        });
+        return;
+      }
+
+      final results = await Future.wait([
+        _safeGet('/people/students/$selectedStudentId/academic-summary'),
+        _safeGet('/people/students/$selectedStudentId/timeline', params: {
+          'max_events': '60',
+        }),
+        _safeGet('/students/$selectedStudentId/marks/summary'),
+        _safeGet('/notifications', params: {'page_size': '20'}),
+        _safeGet('/attendance', params: {
+          'student_id': selectedStudentId,
+          'date_from': today,
+          'date_to': today,
+          'page_size': '5',
+        }),
+      ]);
+
+      final summaryData = results[0]['data'] as Map<String, dynamic>? ?? {};
+      final timelineData = results[1]['data'] as Map<String, dynamic>? ?? {};
+      final marksData = results[2]['data'] as Map<String, dynamic>? ?? {};
+      final notificationsList = _asList(results[3]['data']);
+      final todayAttendanceList = _asList(results[4]['data']);
+
+      final attendanceSummary =
+          summaryData['attendance_summary'] as Map<String, dynamic>? ?? {};
+      final homeworkSummary =
+          summaryData['homework_summary'] as Map<String, dynamic>? ?? {};
+      final marksSummary = summaryData['marks_summary'] as Map<String, dynamic>? ?? {};
+
+      final presentCount = _asInt(attendanceSummary['present']);
+      final absentCount = _asInt(attendanceSummary['absent']);
+      final lateCount = _asInt(attendanceSummary['late']);
+      final leaveCount = _asInt(attendanceSummary['leave']);
+      final totalDays = _asInt(attendanceSummary['total_days']);
+
+      final totalHomeworkAssigned = _asInt(homeworkSummary['total_assigned']);
+      final homeworkSubmitted = _asInt(homeworkSummary['submitted']);
+      final homeworkPending =
+          math.max(0, totalHomeworkAssigned - homeworkSubmitted);
+
+      final trend = _asList(marksData['trend']).map((item) {
+        final row = item as Map<String, dynamic>;
+        return _TrendPoint(
+          label: row['label']?.toString() ?? '',
+          value: _asDouble(row['average']),
+        );
+      }).toList();
+
+      final subjects = _asList(marksData['subject_averages']).map((item) {
+        final row = item as Map<String, dynamic>;
+        return _SubjectPoint(
+          subject: row['subject_name']?.toString() ?? 'Subject',
+          value: _asDouble(row['average']),
+        );
+      }).toList();
+
+      final timelineEvents = _asList(timelineData['events']);
+      final recentAssessments = timelineEvents
+          .where((event) => (event as Map<String, dynamic>)['type'] == 'assessment_score')
+          .take(8)
+          .map((event) => _RecentAssessmentPoint.fromTimeline(event as Map<String, dynamic>))
+          .where((event) => event.maxMarks > 0)
+          .toList();
+
+      final recentNotifications = notificationsList
+          .take(6)
+          .map((item) => _NotificationPreview.fromJson(item as Map<String, dynamic>))
+          .toList();
+
+      final unreadNotifications = notificationsList.where((item) {
+        final row = item as Map<String, dynamic>;
+        return (row['status']?.toString() ?? '').toLowerCase() != 'read';
+      }).length;
+
+      final todayAttendanceStatus = todayAttendanceList.isNotEmpty
+          ? ((todayAttendanceList.first as Map<String, dynamic>)['status']?.toString() ?? 'pending')
+          : 'pending';
+
+      final marksAverage = _asDouble(marksSummary['average_percentage']) > 0
+          ? _asDouble(marksSummary['average_percentage'])
+          : _asDouble(marksData['overall_average']);
+
+      final monthlyTests = recentAssessments
+          .where((event) => event.assessmentType.toLowerCase() == 'monthly')
+          .toList();
+      final monthlyAverage = monthlyTests.isNotEmpty
+          ? monthlyTests.map((event) => event.percentage).reduce((a, b) => a + b) / monthlyTests.length
+          : marksAverage;
+
+      if (!mounted) return;
+      setState(() {
+        _linkedStudents = linkedStudents;
+        _selectedStudentId = selectedStudentId;
+        _focusStudentId = selectedStudentId;
+
+        _attendanceToday = todayAttendanceStatus == 'pending' ? 0 : 1;
+        _todayAttendanceStatus = todayAttendanceStatus;
+
+        _presentCount = presentCount;
+        _absentCount = absentCount;
+        _lateCount = lateCount;
+        _leaveCount = leaveCount;
+        _attendanceRate = totalDays > 0
+            ? _asDouble(attendanceSummary['rate'])
+            : 0;
+
+        _totalHomeworkAssigned = totalHomeworkAssigned;
+        _homeworkDoneCount = homeworkSubmitted;
+        _homeworkPendingCount = homeworkPending;
+        _missingHomeworkCount = homeworkPending;
+        _upcomingHomework = homeworkPending;
+        _homeworkCompletionRate = _asDouble(homeworkSummary['completion_rate']);
+
+        _marksAverage = marksAverage;
+        _monthlyTestAverage = monthlyAverage;
+        _assessmentCount = _asInt(marksSummary['assessment_count']);
+
+        _unreadNotifications = unreadNotifications > 0
+            ? unreadNotifications
+            : _extractTotal(results[3]);
+        _recentNotifications = recentNotifications;
+
+        _trend = trend;
+        _subjects = subjects;
+        _recentAssessments = recentAssessments;
+
+        _participationPulse =
+            ((_attendanceRate * 0.55) + (_homeworkCompletionRate * 0.45))
+                .clamp(0.0, 100.0)
+                .toDouble();
+        _progressLoopMessage = _progressLoopFromTrend(trend);
+        _loading = false;
+      });
+      return;
     }
 
     final results = await Future.wait([
@@ -167,11 +399,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }).toList();
     }
 
+    final attendanceToday = _asInt(todayAttendanceData['total_records']);
+    final totalHomeworkAssigned = _asInt(homeworkData['total_assigned']);
+    final homeworkDoneCount = _asInt(homeworkData['submitted_count']);
+    final homeworkPendingCount = math.max(0, totalHomeworkAssigned - homeworkDoneCount);
+
     if (mounted) {
       setState(() {
         _focusStudentId = focusStudentId;
+        _selectedStudentId = focusStudentId;
+        _linkedStudents = [];
+        _todayAttendanceStatus = attendanceToday > 0 ? 'present' : 'pending';
 
-        _attendanceToday = _asInt(todayAttendanceData['total_records']);
+        _attendanceToday = attendanceToday;
         _attendanceRate = _asDouble(attendanceData['present_rate']);
         _presentCount = _asInt(attendanceData['present_count']);
         _absentCount = _asInt(attendanceData['absent_count']);
@@ -179,7 +419,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _leaveCount = _asInt(attendanceData['leave_count']);
 
         _homeworkCompletionRate = _asDouble(homeworkData['completion_rate']);
-        _totalHomeworkAssigned = _asInt(homeworkData['total_assigned']);
+        _totalHomeworkAssigned = totalHomeworkAssigned;
+        _homeworkDoneCount = homeworkDoneCount;
+        _homeworkPendingCount = homeworkPendingCount;
         _missingHomeworkCount = _asInt(homeworkData['missing_count']);
 
         _marksAverage = _asDouble(marksData['avg_percentage']);
@@ -190,9 +432,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ? unreadNotifications
             : _extractTotal(results[5]);
         _upcomingHomework = upcomingHomework;
+        _recentNotifications = notificationsList
+            .take(6)
+            .map((item) => _NotificationPreview.fromJson(item as Map<String, dynamic>))
+            .toList();
 
         _trend = trend;
         _subjects = subjects;
+        _recentAssessments = trend
+            .reversed
+            .take(5)
+            .map((point) => _RecentAssessmentPoint(
+                  title: point.label,
+                  assessmentType: 'assessment',
+                  marksObtained: point.value,
+                  maxMarks: 100,
+                  percentage: point.value,
+                  dateText: point.label,
+                ))
+            .toList();
+        _participationPulse =
+            ((_attendanceRate * 0.55) + (_homeworkCompletionRate * 0.45))
+                .clamp(0.0, 100.0)
+                .toDouble();
+        _progressLoopMessage = _progressLoopFromTrend(trend);
 
         _loading = false;
       });
@@ -203,6 +466,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
     final displayName = user?.firstName ?? 'Learner';
+    final isParentOrStudent = (user?.isParent ?? false) || (user?.isStudent ?? false);
+
+    _LinkedStudent? activeStudent;
+    for (final student in _linkedStudents) {
+      if (student.id == _selectedStudentId) {
+        activeStudent = student;
+        break;
+      }
+    }
 
     final performanceScore = ((_attendanceRate +
                 _homeworkCompletionRate +
@@ -216,7 +488,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final goodSlice = donutTotal == 0 ? 0.0 : (_presentCount / donutTotal);
 
     final trendPoints = _trend.take(8).toList();
-    final monthlyRows = _trend.reversed.take(5).toList();
+    final monthlyRows = _recentAssessments
+        .map((item) => _TrendPoint(label: item.title, value: item.percentage))
+        .take(5)
+        .toList();
 
     return RefreshIndicator(
       onRefresh: _loadDashboard,
@@ -228,7 +503,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
             focusStudentId: _focusStudentId,
             loading: _loading,
             score: performanceScore,
+            studentName: activeStudent?.fullName,
+            classLabel: activeStudent?.classLabel,
+            classTeacherName: activeStudent?.classTeacherName,
+            progressLoop: _progressLoopMessage,
           ),
+          if (isParentOrStudent && _linkedStudents.length > 1) ...[
+            const SizedBox(height: 14),
+            _StudentSwitcher(
+              students: _linkedStudents,
+              selectedStudentId: _selectedStudentId,
+              onChanged: (studentId) {
+                if (studentId == _selectedStudentId) return;
+                setState(() {
+                  _selectedStudentId = studentId;
+                });
+                _loadDashboard();
+              },
+            ),
+          ],
           const SizedBox(height: 14),
           Row(
             children: [
@@ -237,7 +530,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   icon: Icons.fact_check_rounded,
                   label: 'Today Attendance',
                   value: _loading ? '...' : '$_attendanceToday',
-                  hint: 'Daily check',
+                  hint: _loading ? 'Daily check' : _todayAttendanceStatus.toUpperCase(),
                   color: AgoraTheme.success,
                 ),
               ),
@@ -245,9 +538,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Expanded(
                 child: _KpiCard(
                   icon: Icons.menu_book_rounded,
-                  label: 'Due This Week',
+                  label: 'Pending HW',
                   value: _loading ? '...' : '$_upcomingHomework',
-                  hint: 'Homework',
+                  hint: _loading ? 'Homework' : 'Done $_homeworkDoneCount',
                   color: AgoraTheme.primaryColor,
                 ),
               ),
@@ -263,6 +556,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
+          if (isParentOrStudent) ...[
+            const SizedBox(height: 14),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Child Status Snapshot',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _LegendPill(
+                          label: 'Attendance: ${_todayAttendanceStatus.toUpperCase()}',
+                          color: _statusColor(_todayAttendanceStatus),
+                        ),
+                        _LegendPill(
+                          label: 'Homework Done $_homeworkDoneCount',
+                          color: AgoraTheme.success,
+                        ),
+                        _LegendPill(
+                          label: 'Homework Pending $_homeworkPendingCount',
+                          color: AgoraTheme.warning,
+                        ),
+                        _LegendPill(
+                          label: 'Participation ${_participationPulse.toStringAsFixed(1)}%',
+                          color: const Color(0xFF7C3AED),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Card(
             child: Padding(
@@ -290,6 +623,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       label: 'Homework Completion',
                       percent: _homeworkCompletionRate,
                       color: AgoraTheme.primaryColor),
+                  const SizedBox(height: 12),
+                  _ProgressTile(
+                    label: 'Participation Pulse',
+                    percent: _participationPulse,
+                    color: const Color(0xFF7C3AED),
+                  ),
                   const SizedBox(height: 12),
                   _ProgressTile(
                     label: 'Monthly Test Average',
@@ -434,6 +773,151 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
+          if (_recentAssessments.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Recent Test Marks',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._recentAssessments.take(4).map((test) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    test.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    test.assessmentType.replaceAll('_', ' ').toUpperCase(),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AgoraTheme.textMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${test.marksObtained.toStringAsFixed(0)}/${test.maxMarks.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AgoraTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1D4ED8).withValues(alpha: 0.10),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text(
+                                '${test.percentage.toStringAsFixed(0)}%',
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1D4ED8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          if (_recentNotifications.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'School Notifications',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._recentNotifications.take(4).map((notification) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              notification.status.toLowerCase() == 'read'
+                                  ? Icons.mark_email_read_rounded
+                                  : Icons.mark_email_unread_rounded,
+                              size: 17,
+                              color: notification.status.toLowerCase() == 'read'
+                                  ? AgoraTheme.textMuted
+                                  : AgoraTheme.primaryColor,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    notification.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    notification.body,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11.5,
+                                      color: AgoraTheme.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              notification.timeLabel,
+                              style: const TextStyle(fontSize: 10.5, color: AgoraTheme.textMuted),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Card(
             child: Padding(
@@ -465,7 +949,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }),
                   const SizedBox(height: 6),
                   Text(
-                    'Homework assigned: $_totalHomeworkAssigned | Missing: $_missingHomeworkCount',
+                    'Homework assigned: $_totalHomeworkAssigned | Done: $_homeworkDoneCount | Pending: $_homeworkPendingCount',
                     style: const TextStyle(
                         fontSize: 12, color: AgoraTheme.textMuted),
                   ),
@@ -491,17 +975,172 @@ class _SubjectPoint {
   const _SubjectPoint({required this.subject, required this.value});
 }
 
+class _LinkedStudent {
+  final String id;
+  final String studentCode;
+  final String fullName;
+  final String? classLabel;
+  final String? classTeacherName;
+
+  const _LinkedStudent({
+    required this.id,
+    required this.studentCode,
+    required this.fullName,
+    this.classLabel,
+    this.classTeacherName,
+  });
+
+  factory _LinkedStudent.fromJson(Map<String, dynamic> json) {
+    final classroom = json['classroom'] as Map<String, dynamic>?;
+    return _LinkedStudent(
+      id: json['id']?.toString() ?? '',
+      studentCode: json['student_code']?.toString() ?? '—',
+      fullName: json['full_name']?.toString().trim().isNotEmpty == true
+          ? json['full_name'].toString().trim()
+          : [json['first_name'], json['last_name']]
+              .where((item) => item != null && item.toString().trim().isNotEmpty)
+              .join(' ')
+              .trim(),
+      classLabel: classroom?['display_name']?.toString(),
+      classTeacherName: classroom?['class_teacher_name']?.toString(),
+    );
+  }
+}
+
+class _RecentAssessmentPoint {
+  final String title;
+  final String assessmentType;
+  final double marksObtained;
+  final double maxMarks;
+  final double percentage;
+  final String dateText;
+
+  const _RecentAssessmentPoint({
+    required this.title,
+    required this.assessmentType,
+    required this.marksObtained,
+    required this.maxMarks,
+    required this.percentage,
+    required this.dateText,
+  });
+
+  factory _RecentAssessmentPoint.fromTimeline(Map<String, dynamic> timelineEvent) {
+    final payload = timelineEvent['data'] as Map<String, dynamic>? ?? {};
+    final marks = (payload['marks_obtained'] as num?)?.toDouble() ?? 0;
+    final maxMarks = (payload['max_marks'] as num?)?.toDouble() ?? 0;
+    final percentage = maxMarks > 0 ? ((marks / maxMarks) * 100) : 0;
+
+    return _RecentAssessmentPoint(
+      title: payload['title']?.toString() ?? 'Assessment',
+      assessmentType: payload['assessment_type']?.toString() ?? 'assessment',
+      marksObtained: marks,
+      maxMarks: maxMarks,
+      percentage: percentage.clamp(0, 100).toDouble(),
+      dateText: timelineEvent['date']?.toString() ?? '',
+    );
+  }
+}
+
+class _NotificationPreview {
+  final String title;
+  final String body;
+  final String status;
+  final String timeLabel;
+
+  const _NotificationPreview({
+    required this.title,
+    required this.body,
+    required this.status,
+    required this.timeLabel,
+  });
+
+  factory _NotificationPreview.fromJson(Map<String, dynamic> json) {
+    final createdAt = json['created_at']?.toString();
+    DateTime? dateTime;
+    if (createdAt != null && createdAt.isNotEmpty) {
+      dateTime = DateTime.tryParse(createdAt);
+    }
+
+    return _NotificationPreview(
+      title: json['title']?.toString() ?? 'Notification',
+      body: json['body']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'queued',
+      timeLabel: dateTime == null ? '' : DateFormat('d MMM').format(dateTime.toLocal()),
+    );
+  }
+}
+
+class _StudentSwitcher extends StatelessWidget {
+  final List<_LinkedStudent> students;
+  final String selectedStudentId;
+  final ValueChanged<String> onChanged;
+
+  const _StudentSwitcher({
+    required this.students,
+    required this.selectedStudentId,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Viewing Child',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: selectedStudentId.isEmpty ? null : selectedStudentId,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              items: students
+                  .map(
+                    (student) => DropdownMenuItem<String>(
+                      value: student.id,
+                      child: Text(
+                        '${student.fullName} (${student.studentCode})',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) onChanged(value);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _HeroCard extends StatelessWidget {
   final String name;
   final String focusStudentId;
   final bool loading;
   final double score;
+  final String? studentName;
+  final String? classLabel;
+  final String? classTeacherName;
+  final String progressLoop;
 
   const _HeroCard({
     required this.name,
     required this.focusStudentId,
     required this.loading,
     required this.score,
+    required this.studentName,
+    required this.classLabel,
+    required this.classTeacherName,
+    required this.progressLoop,
   });
 
   @override
@@ -559,6 +1198,38 @@ class _HeroCard extends StatelessWidget {
                 : 'Performance score ${score.toStringAsFixed(1)}% • Keep the momentum going',
             style: const TextStyle(color: Color(0xE6FFFFFF), fontSize: 13.5),
           ),
+          if ((studentName ?? '').isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Child: $studentName',
+              style: const TextStyle(color: Color(0xCCFFFFFF), fontSize: 12),
+            ),
+          ],
+          if ((classLabel ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Class: $classLabel',
+              style: const TextStyle(color: Color(0xCCFFFFFF), fontSize: 11.5),
+            ),
+          ],
+          if ((classTeacherName ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Class Teacher: $classTeacherName',
+              style: const TextStyle(color: Color(0xCCFFFFFF), fontSize: 11.5),
+            ),
+          ],
+          if (!loading) ...[
+            const SizedBox(height: 8),
+            Text(
+              progressLoop,
+              style: const TextStyle(
+                color: Color(0xE6FFFFFF),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           if (focusStudentId.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(

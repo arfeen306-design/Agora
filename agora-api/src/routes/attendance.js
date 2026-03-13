@@ -916,4 +916,108 @@ router.patch(
   })
 );
 
+router.get(
+  "/summary",
+  requireAuth,
+  requireRoles("school_admin", "principal", "vice_principal", "headmistress", "teacher"),
+  asyncHandler(async (req, res) => {
+    const summaryQuerySchema = z.object({
+      classroom_id: z.string().uuid(),
+      date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    });
+    const query = parseSchema(summaryQuerySchema, req.query, "Invalid attendance summary query");
+    assertDateRange({ dateFrom: query.date_from, dateTo: query.date_to });
+
+    const classroomOk = await classroomExists(req.auth.schoolId, query.classroom_id);
+    if (!classroomOk) {
+      throw new AppError(404, "NOT_FOUND", "Classroom not found for this school");
+    }
+
+    if (hasRole(req.auth, "teacher") && !hasRole(req.auth, "school_admin")) {
+      await ensureTeacherCanManageClassroom({
+        auth: req.auth,
+        classroomId: query.classroom_id,
+      });
+    }
+
+    const params = [req.auth.schoolId, query.classroom_id];
+    const dateWhere = [];
+    if (query.date_from) {
+      params.push(query.date_from);
+      dateWhere.push(`ar.attendance_date >= $${params.length}`);
+    }
+    if (query.date_to) {
+      params.push(query.date_to);
+      dateWhere.push(`ar.attendance_date <= $${params.length}`);
+    }
+    const dateClause = dateWhere.length > 0 ? ` AND ${dateWhere.join(" AND ")}` : "";
+
+    const [classStats, studentStats] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            COUNT(*) FILTER (WHERE ar.status = 'present')::int AS present_count,
+            COUNT(*) FILTER (WHERE ar.status = 'absent')::int AS absent_count,
+            COUNT(*) FILTER (WHERE ar.status = 'late')::int AS late_count,
+            COUNT(*) FILTER (WHERE ar.status = 'leave')::int AS leave_count,
+            COUNT(*)::int AS total_records,
+            COUNT(DISTINCT ar.attendance_date)::int AS total_days
+          FROM attendance_records ar
+          WHERE ar.school_id = $1
+            AND ar.classroom_id = $2
+            ${dateClause}
+        `,
+        params
+      ),
+      pool.query(
+        `
+          SELECT
+            ar.student_id,
+            s.first_name,
+            s.last_name,
+            s.student_code,
+            COUNT(*) FILTER (WHERE ar.status = 'present')::int AS present_count,
+            COUNT(*) FILTER (WHERE ar.status = 'absent')::int AS absent_count,
+            COUNT(*) FILTER (WHERE ar.status = 'late')::int AS late_count,
+            COUNT(*) FILTER (WHERE ar.status = 'leave')::int AS leave_count,
+            COUNT(*)::int AS total_records,
+            CASE WHEN COUNT(*) > 0
+              THEN ROUND((COUNT(*) FILTER (WHERE ar.status IN ('present', 'late'))::numeric / COUNT(*)::numeric) * 100, 1)
+              ELSE 0
+            END AS attendance_percentage
+          FROM attendance_records ar
+          JOIN students s ON s.id = ar.student_id AND s.school_id = ar.school_id
+          WHERE ar.school_id = $1
+            AND ar.classroom_id = $2
+            ${dateClause}
+          GROUP BY ar.student_id, s.first_name, s.last_name, s.student_code
+          ORDER BY s.first_name ASC
+        `,
+        params
+      ),
+    ]);
+
+    const classSummary = classStats.rows[0];
+    return success(
+      res,
+      {
+        classroom_id: query.classroom_id,
+        date_from: query.date_from || null,
+        date_to: query.date_to || null,
+        classroom_summary: {
+          total_records: classSummary.total_records,
+          total_days: classSummary.total_days,
+          present_count: classSummary.present_count,
+          absent_count: classSummary.absent_count,
+          late_count: classSummary.late_count,
+          leave_count: classSummary.leave_count,
+        },
+        students: studentStats.rows,
+      },
+      200
+    );
+  })
+);
+
 module.exports = router;

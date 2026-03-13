@@ -53,6 +53,7 @@ describe("Sidebar role visibility", () => {
     render(<Sidebar />);
 
     expect(screen.getByText("Principal Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Setup Wizard")).toBeInTheDocument();
     expect(screen.getByText("Access Control")).toBeInTheDocument();
     expect(screen.getByText("HR & Payroll")).toBeInTheDocument();
     expect(screen.getByText("Documents")).toBeInTheDocument();
@@ -74,6 +75,7 @@ describe("Sidebar role visibility", () => {
 
     expect(screen.getByText("Admissions")).toBeInTheDocument();
     expect(screen.getByText("Admission Pipeline")).toBeInTheDocument();
+    expect(screen.getByText("Setup Wizard")).toBeInTheDocument();
     expect(screen.queryByText("People")).not.toBeInTheDocument();
   });
 
@@ -92,6 +94,8 @@ describe("Sidebar role visibility", () => {
 
     expect(screen.getByText("Audit Logs")).toBeInTheDocument();
     expect(screen.getByText("Observability")).toBeInTheDocument();
+    expect(screen.getByText("Setup Wizard")).toBeInTheDocument();
+    expect(screen.queryByText("My HR & Finance")).not.toBeInTheDocument();
   });
 
   test("teacher sees self-service HR link only for own finance view", () => {
@@ -99,5 +103,28 @@ describe("Sidebar role visibility", () => {
     expect(screen.getByText("My HR & Finance")).toBeInTheDocument();
     expect(screen.getByText("Documents")).toBeInTheDocument();
     expect(screen.queryByText("HR & Payroll")).not.toBeInTheDocument();
+  });
+
+  test("mixed parent-teacher role collapses to family-safe navigation", () => {
+    mockUseAuth.mockReturnValue({
+      user: buildUser(["parent", "teacher"]),
+      token: "token",
+      loading: false,
+      isAuthenticated: true,
+      isAdmin: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    render(<Sidebar />);
+
+    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    expect(screen.getByText("Attendance")).toBeInTheDocument();
+    expect(screen.getByText("Homework")).toBeInTheDocument();
+    expect(screen.getByText("Marks")).toBeInTheDocument();
+    expect(screen.getByText("Notifications")).toBeInTheDocument();
+    expect(screen.queryByText("Class Teacher")).not.toBeInTheDocument();
+    expect(screen.queryByText("My HR & Finance")).not.toBeInTheDocument();
+    expect(screen.queryByText("Documents")).not.toBeInTheDocument();
   });
 });

@@ -18,6 +18,7 @@ const CLASSROOM_2 = "6f000000-0000-0000-0000-000000000002";
 const STUDENT_1 = "40000000-0000-0000-0000-000000000001";
 const STUDENT_OUT_SCOPE = "4f000000-0000-0000-0000-000000000099";
 const SUBJECT_ID = "70000000-0000-0000-0000-000000000001";
+const HASH_TEACH123 = "$2a$10$8npSDRlRr6QwW.lDp4pF.uHz9iZ/txmp/0fuMP88F/zGu7fTZjDEm";
 
 async function jsonRequest(pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, options);
@@ -92,19 +93,20 @@ async function seedDisciplineFixtures() {
         $1,
         'teacher.discipline2@agora.com',
         '+920000009994',
-        'teach123',
+        $2,
         'Sadia',
         'Farooq',
         TRUE
       )
       ON CONFLICT (school_id, email)
       DO UPDATE SET
+        password_hash = EXCLUDED.password_hash,
         first_name = EXCLUDED.first_name,
         last_name = EXCLUDED.last_name,
         is_active = EXCLUDED.is_active
       RETURNING id
     `,
-    [SCHOOL_ID]
+    [SCHOOL_ID, HASH_TEACH123]
   );
   const teacherTwoUserId = userRow.rows[0].id;
 
@@ -265,6 +267,7 @@ async function seedDisciplineFixtures() {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
   await runSqlFile("database/migrations/20260308_timetable_foundation.sql");
   await runSqlFile("database/migrations/20260308_discipline_foundation.sql");

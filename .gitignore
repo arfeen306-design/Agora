@@ -6,6 +6,8 @@
 # Node
 **/node_modules/
 **/.next/
+**/.next_broken_*/
+**/.next_cache_*/
 **/dist/
 **/build/
 npm-debug.log*

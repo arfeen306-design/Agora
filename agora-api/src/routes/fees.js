@@ -45,6 +45,7 @@ const updatePlanSchema = z
 
 const listInvoicesQuerySchema = z.object({
   student_id: z.string().uuid().optional(),
+  academic_year_id: z.string().uuid().optional(),
   status: invoiceStatusSchema.optional(),
   date_from: z
     .string()
@@ -441,6 +442,18 @@ router.get(
     if (query.student_id) {
       params.push(query.student_id);
       where.push(`fi.student_id = $${params.length}`);
+    }
+    if (query.academic_year_id) {
+      params.push(query.academic_year_id);
+      where.push(`
+        EXISTS (
+          SELECT 1
+          FROM fee_plans fp
+          WHERE fp.school_id = fi.school_id
+            AND fp.id = fi.fee_plan_id
+            AND fp.academic_year_id = $${params.length}
+        )
+      `);
     }
     if (query.status) {
       params.push(query.status);

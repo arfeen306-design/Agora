@@ -17,7 +17,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'principal@agora.com',
     '+920000000005',
-    'principal123',
+    '$2a$10$cw6mCAJq7qq.XVBDLCw/w.h0dnaYIQ.He/QByQlCd3b3yEqed3NTO',
     'Farah',
     'Siddiqui',
     TRUE
@@ -27,7 +27,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'viceprincipal@agora.com',
     '+920000000006',
-    'vice123',
+    '$2a$10$Ns/mCo/Uax5QLCxi4/UNdOrSIn4LHwxZIPa02fhZbjEVNFF0xm4Li',
     'Naveed',
     'Qureshi',
     TRUE
@@ -37,7 +37,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'hm.middle@agora.com',
     '+920000000007',
-    'hm123',
+    '$2a$10$cCjVtceQ/b7VDVHMTWDm8egQ9OY67Hbs5jZme22l/6t8aiG8r9CH2',
     'Saima',
     'Rehman',
     TRUE
@@ -47,7 +47,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'accountant@agora.com',
     '+920000000008',
-    'accounts123',
+    '$2a$10$O8BJZKBWKFM9zutglQQb0.GBUrh8riKPTQps3IELXBU7MvlS.t4HO',
     'Bilal',
     'Khan',
     TRUE
@@ -57,12 +57,19 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'frontdesk1@agora.com',
     '+920000000009',
-    'front123',
+    '$2a$10$FOHCYDug1bR3o8C2D5Urbu6/ppZXxq15MD6Pc5ynCWJZRv/E0Xo1e',
     'Hina',
     'Ali',
     TRUE
   )
-ON CONFLICT (school_id, email) DO NOTHING;
+ON CONFLICT (school_id, email) DO UPDATE
+SET
+  phone = EXCLUDED.phone,
+  password_hash = EXCLUDED.password_hash,
+  first_name = EXCLUDED.first_name,
+  last_name = EXCLUDED.last_name,
+  is_active = EXCLUDED.is_active,
+  updated_at = NOW();
 
 INSERT INTO user_roles (user_id, role_id)
 SELECT '20000000-0000-0000-0000-000000000005', id FROM roles WHERE code = 'principal'

@@ -19,7 +19,7 @@ import {
   getPeopleStaff,
   getPeopleStudents,
   ImportJobRecord,
-  previewStudentImport,
+  previewPeopleImport,
   StaffMember,
   StudentMasterRow,
 } from "@/lib/api";
@@ -40,20 +40,69 @@ const roleChoices = [
   { code: "hr_admin", label: "HR Admin" },
 ];
 
-const requiredImportFields = [
-  "student_code",
-  "class_label",
-  "section_label",
-  "father_name",
-  "whatsapp_number",
-  "mobile_number",
-  "admission_date",
-  "guardian_relation",
-  "emergency_contact",
+type ImportType = "students" | "staff" | "parents";
+
+const importTypeChoices: Array<{ value: ImportType; label: string; description: string }> = [
+  { value: "students", label: "Students", description: "Student + parent extraction from same sheet (auto link supported)." },
+  { value: "staff", label: "Staff", description: "Create staff users, assign login role, and create staff profile." },
+  { value: "parents", label: "Parents", description: "Create parent profiles and optionally link student codes." },
 ];
+
+const requiredImportFieldsByType: Record<ImportType, string[]> = {
+  students: [
+    "student_code",
+    "class_label",
+    "section_label",
+    "father_name",
+    "whatsapp_number",
+    "mobile_number",
+    "admission_date",
+    "guardian_relation",
+    "emergency_contact",
+  ],
+  staff: ["staff_code", "email", "staff_type"],
+  parents: [],
+};
 
 function normalizeErrorText(text?: string) {
   return text ? text.replaceAll("_", " ") : "";
+}
+
+function defaultImportFields(importType: ImportType) {
+  return requiredImportFieldsByType[importType] || [];
+}
+
+function previewColumnsForImport(importType: ImportType) {
+  if (importType === "staff") {
+    return [
+      { key: "staff_code", label: "Staff Code" },
+      { key: "first_name", label: "First Name" },
+      { key: "last_name", label: "Last Name" },
+      { key: "email", label: "Email" },
+      { key: "staff_type", label: "Type" },
+      { key: "role_code", label: "Role" },
+    ];
+  }
+
+  if (importType === "parents") {
+    return [
+      { key: "first_name", label: "First Name" },
+      { key: "last_name", label: "Last Name" },
+      { key: "email", label: "Email" },
+      { key: "phone", label: "Phone" },
+      { key: "whatsapp_number", label: "WhatsApp" },
+      { key: "linked_student_codes", label: "Student Codes" },
+    ];
+  }
+
+  return [
+    { key: "student_code", label: "Student Code" },
+    { key: "first_name", label: "First Name" },
+    { key: "last_name", label: "Last Name" },
+    { key: "class_label", label: "Class" },
+    { key: "section_label", label: "Section" },
+    { key: "mobile_number", label: "Mobile" },
+  ];
 }
 
 async function fileToBase64(file: File) {
@@ -80,6 +129,7 @@ export default function PeoplePage() {
 
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [students, setStudents] = useState<StudentMasterRow[]>([]);
+  const [importType, setImportType] = useState<ImportType>("students");
   const [importJobs, setImportJobs] = useState<ImportJobRecord[]>([]);
   const [importPreview, setImportPreview] = useState<ImportJobRecord | null>(null);
   const [importMapping, setImportMapping] = useState<Record<string, string>>({});
@@ -89,6 +139,7 @@ export default function PeoplePage() {
   const [importingPreview, setImportingPreview] = useState(false);
   const [executingImport, setExecutingImport] = useState(false);
   const [downloadingErrorsFor, setDownloadingErrorsFor] = useState<string | null>(null);
+  const [createParentAccountsOnStudentImport, setCreateParentAccountsOnStudentImport] = useState(true);
 
   const [sections, setSections] = useState<Array<{ id: string; label: string }>>([]);
   const [classrooms, setClassrooms] = useState<Array<{ id: string; label: string }>>([]);
@@ -121,6 +172,19 @@ export default function PeoplePage() {
     roll_no: "",
     emergency_contact_name: "",
     emergency_contact_phone: "",
+    create_parent_inline: true,
+    parent_first_name: "",
+    parent_last_name: "",
+    parent_email: "",
+    parent_phone: "",
+    parent_whatsapp_number: "",
+    parent_father_name: "",
+    parent_mother_name: "",
+    parent_guardian_name: "",
+    parent_address_line: "",
+    parent_relation_type: "guardian",
+    parent_is_primary: true,
+    parent_temporary_password: "ChangeMe123!",
   });
 
   const loadData = useCallback(async () => {
@@ -136,10 +200,10 @@ export default function PeoplePage() {
       const [staffRes, studentsRes, sectionRows, classroomRows, yearRows, importJobsRes] = await Promise.all([
         getPeopleStaff({ page_size: "80" }),
         getPeopleStudents({ page_size: "80" }),
-        getLookupSections({ page_size: 120 }),
-        getLookupClassrooms({ page_size: 120 }),
+        getLookupSections({ page_size: 100 }),
+        getLookupClassrooms({ page_size: 100 }),
         getLookupAcademicYears({ page_size: 30 }),
-        getImportJobs({ page_size: "20", import_type: "students" }),
+        getImportJobs({ page_size: "20", import_type: importType }),
       ]);
 
       setStaff(staffRes.data);
@@ -158,11 +222,19 @@ export default function PeoplePage() {
     } finally {
       setLoading(false);
     }
-  }, [canAccess]);
+  }, [canAccess, importType]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    setImportPreview(null);
+    setImportHeaders([]);
+    setImportMapping({});
+    setError("");
+    setNotice("");
+  }, [importType]);
 
   if (!canAccess) {
     return (
@@ -233,6 +305,11 @@ export default function PeoplePage() {
     setNotice("");
 
     try {
+      const includeParent = studentForm.create_parent_inline;
+      if (includeParent && !studentForm.parent_first_name.trim()) {
+        throw new Error("Parent first name is required when creating parent with student admission.");
+      }
+
       await createPeopleStudent({
         student_code: studentForm.student_code,
         first_name: studentForm.first_name,
@@ -243,6 +320,23 @@ export default function PeoplePage() {
         roll_no: studentForm.roll_no ? Number(studentForm.roll_no) : undefined,
         emergency_contact_name: studentForm.emergency_contact_name || undefined,
         emergency_contact_phone: studentForm.emergency_contact_phone || undefined,
+        parent: includeParent
+          ? {
+              first_name: studentForm.parent_first_name.trim(),
+              last_name: studentForm.parent_last_name.trim() || undefined,
+              email: studentForm.parent_email.trim() || undefined,
+              phone: studentForm.parent_phone.trim() || undefined,
+              whatsapp_number: studentForm.parent_whatsapp_number.trim() || undefined,
+              father_name: studentForm.parent_father_name.trim() || undefined,
+              mother_name: studentForm.parent_mother_name.trim() || undefined,
+              guardian_name: studentForm.parent_guardian_name.trim() || undefined,
+              address_line: studentForm.parent_address_line.trim() || undefined,
+              relation_type: studentForm.parent_relation_type,
+              is_primary: studentForm.parent_is_primary,
+              temporary_password: studentForm.parent_temporary_password.trim() || "ChangeMe123!",
+              preferred_channel: "in_app",
+            }
+          : undefined,
       });
 
       setStudentForm((prev) => ({
@@ -255,10 +349,23 @@ export default function PeoplePage() {
         roll_no: "",
         emergency_contact_name: "",
         emergency_contact_phone: "",
+        create_parent_inline: true,
+        parent_first_name: "",
+        parent_last_name: "",
+        parent_email: "",
+        parent_phone: "",
+        parent_whatsapp_number: "",
+        parent_father_name: "",
+        parent_mother_name: "",
+        parent_guardian_name: "",
+        parent_address_line: "",
+        parent_relation_type: "guardian",
+        parent_is_primary: true,
+        parent_temporary_password: "ChangeMe123!",
       }));
 
       await loadData();
-      setNotice("Student enrolled successfully.");
+      setNotice(includeParent ? "Student + parent admission created successfully." : "Student enrolled successfully.");
     } catch (err: unknown) {
       setError(extractErrorMessage(err, "Failed to create student"));
     } finally {
@@ -272,6 +379,7 @@ export default function PeoplePage() {
       setImportFileBase64("");
       setImportHeaders([]);
       setImportPreview(null);
+      setImportMapping({});
       return;
     }
 
@@ -290,6 +398,7 @@ export default function PeoplePage() {
     setImportFileBase64(encoded);
     setImportPreview(null);
     setImportHeaders([]);
+    setImportMapping({});
   }
 
   async function runPreview(customMapping?: Record<string, string>) {
@@ -307,19 +416,19 @@ export default function PeoplePage() {
         Object.entries(customMapping || {}).filter(([, value]) => String(value || "").trim().length > 0)
       );
 
-      const result = await previewStudentImport({
+      const result = await previewPeopleImport({
         source_file_name: importFileName,
         file_base64: importFileBase64,
-        import_type: "students",
+        import_type: importType,
         mapping: Object.keys(cleanedMapping).length > 0 ? cleanedMapping : undefined,
-        default_academic_year_id: studentForm.academic_year_id || undefined,
+        default_academic_year_id: importType === "students" ? studentForm.academic_year_id || undefined : undefined,
       });
 
       setImportPreview(result);
       setImportHeaders(result.detected_headers || []);
       setImportMapping(result.field_mapping || {});
 
-      const jobs = await getImportJobs({ page_size: "20", import_type: "students" });
+      const jobs = await getImportJobs({ page_size: "20", import_type: importType });
       setImportJobs(jobs.data);
 
       if (result.invalid_rows > 0) {
@@ -353,13 +462,13 @@ export default function PeoplePage() {
 
     try {
       const execution = await executeImportJob(importPreview.id, {
-        create_parent_accounts: true,
+        create_parent_accounts: importType === "students" ? createParentAccountsOnStudentImport : false,
       });
 
       const refreshed = await getImportJob(importPreview.id);
       setImportPreview(refreshed);
 
-      const jobs = await getImportJobs({ page_size: "20", import_type: "students" });
+      const jobs = await getImportJobs({ page_size: "20", import_type: importType });
       setImportJobs(jobs.data);
 
       await loadData();
@@ -472,7 +581,10 @@ export default function PeoplePage() {
               </form>
 
               <form onSubmit={handleCreateStudent} className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">Create Student Enrollment</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Student Admission (Student + Parent)</h3>
+                <p className="text-sm text-gray-500">
+                  Use this single form to create student admission and parent profile together.
+                </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field label="Student Code"><input className="input-field" value={studentForm.student_code} onChange={(e) => setStudentForm((p) => ({ ...p, student_code: e.target.value.toUpperCase() }))} required /></Field>
                   <Field label="First Name"><input className="input-field" value={studentForm.first_name} onChange={(e) => setStudentForm((p) => ({ ...p, first_name: e.target.value }))} required /></Field>
@@ -498,8 +610,53 @@ export default function PeoplePage() {
                   <Field label="Emergency Contact Name"><input className="input-field" value={studentForm.emergency_contact_name} onChange={(e) => setStudentForm((p) => ({ ...p, emergency_contact_name: e.target.value }))} /></Field>
                   <Field label="Emergency Contact Phone"><input className="input-field" value={studentForm.emergency_contact_phone} onChange={(e) => setStudentForm((p) => ({ ...p, emergency_contact_phone: e.target.value }))} /></Field>
                 </div>
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 space-y-3">
+                  <label className="flex items-center gap-3 text-sm font-medium text-indigo-900">
+                    <input
+                      type="checkbox"
+                      checked={studentForm.create_parent_inline}
+                      onChange={(e) => setStudentForm((p) => ({ ...p, create_parent_inline: e.target.checked }))}
+                    />
+                    Create/Link Parent in the same admission flow
+                  </label>
+
+                  {studentForm.create_parent_inline && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Field label="Parent First Name"><input className="input-field" value={studentForm.parent_first_name} onChange={(e) => setStudentForm((p) => ({ ...p, parent_first_name: e.target.value }))} required={studentForm.create_parent_inline} /></Field>
+                      <Field label="Parent Last Name"><input className="input-field" value={studentForm.parent_last_name} onChange={(e) => setStudentForm((p) => ({ ...p, parent_last_name: e.target.value }))} /></Field>
+                      <Field label="Parent Email"><input className="input-field" type="email" value={studentForm.parent_email} onChange={(e) => setStudentForm((p) => ({ ...p, parent_email: e.target.value }))} /></Field>
+                      <Field label="Parent Phone"><input className="input-field" value={studentForm.parent_phone} onChange={(e) => setStudentForm((p) => ({ ...p, parent_phone: e.target.value }))} /></Field>
+                      <Field label="Parent WhatsApp"><input className="input-field" value={studentForm.parent_whatsapp_number} onChange={(e) => setStudentForm((p) => ({ ...p, parent_whatsapp_number: e.target.value }))} /></Field>
+                      <Field label="Relation Type">
+                        <select className="input-field" value={studentForm.parent_relation_type} onChange={(e) => setStudentForm((p) => ({ ...p, parent_relation_type: e.target.value }))}>
+                          <option value="guardian">Guardian</option>
+                          <option value="father">Father</option>
+                          <option value="mother">Mother</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </Field>
+                      <Field label="Father Name"><input className="input-field" value={studentForm.parent_father_name} onChange={(e) => setStudentForm((p) => ({ ...p, parent_father_name: e.target.value }))} /></Field>
+                      <Field label="Mother Name"><input className="input-field" value={studentForm.parent_mother_name} onChange={(e) => setStudentForm((p) => ({ ...p, parent_mother_name: e.target.value }))} /></Field>
+                      <Field label="Guardian Display Name"><input className="input-field" value={studentForm.parent_guardian_name} onChange={(e) => setStudentForm((p) => ({ ...p, parent_guardian_name: e.target.value }))} /></Field>
+                      <Field label="Temporary Parent Password"><input className="input-field" value={studentForm.parent_temporary_password} onChange={(e) => setStudentForm((p) => ({ ...p, parent_temporary_password: e.target.value }))} /></Field>
+                      <div className="md:col-span-2">
+                        <Field label="Address">
+                          <input className="input-field" value={studentForm.parent_address_line} onChange={(e) => setStudentForm((p) => ({ ...p, parent_address_line: e.target.value }))} />
+                        </Field>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm text-indigo-900 md:col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={studentForm.parent_is_primary}
+                          onChange={(e) => setStudentForm((p) => ({ ...p, parent_is_primary: e.target.checked }))}
+                        />
+                        Mark as primary guardian
+                      </label>
+                    </div>
+                  )}
+                </div>
                 <button className="btn-primary" type="submit" disabled={creatingStudent}>
-                  {creatingStudent ? "Creating..." : "Enroll Student"}
+                  {creatingStudent ? "Creating..." : "Create Admission"}
                 </button>
               </form>
             </div>
@@ -508,10 +665,29 @@ export default function PeoplePage() {
               <form onSubmit={handlePreviewImport} className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm xl:col-span-2 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-900">Bulk Import Students</h3>
-                    <p className="text-sm text-gray-500">Upload CSV/XLSX, validate rows, then import valid records.</p>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Bulk Import {importTypeChoices.find((choice) => choice.value === importType)?.label}
+                    </h3>
+                    <p className="text-sm text-gray-500">
+                      {importTypeChoices.find((choice) => choice.value === importType)?.description}
+                    </p>
                   </div>
                 </div>
+
+                <label className="block">
+                  <span className="label-text">Import Type</span>
+                  <select
+                    className="input-field"
+                    value={importType}
+                    onChange={(e) => setImportType(e.target.value as ImportType)}
+                  >
+                    {importTypeChoices.map((choice) => (
+                      <option key={choice.value} value={choice.value}>
+                        {choice.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
                 <label className="block">
                   <span className="label-text">Select File (.csv, .xlsx, .xls)</span>
@@ -529,14 +705,30 @@ export default function PeoplePage() {
                   </p>
                 )}
 
-                {importHeaders.length > 0 && (
+                {importType === "students" && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 space-y-2">
+                    <label className="flex items-center gap-2 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={createParentAccountsOnStudentImport}
+                        onChange={(e) => setCreateParentAccountsOnStudentImport(e.target.checked)}
+                      />
+                      Auto create/link parent accounts from this student sheet
+                    </label>
+                    <p className="text-xs text-emerald-700">
+                      When enabled, student rows with parent contact columns will automatically create or link parent profiles.
+                    </p>
+                  </div>
+                )}
+
+                {importHeaders.length > 0 && defaultImportFields(importType).length > 0 && (
                   <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 space-y-3">
                     <p className="text-sm font-semibold text-indigo-800">Column Mapping</p>
                     <p className="text-xs text-indigo-700">
                       Adjust mapping for required fields before re-validating.
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {requiredImportFields.map((field) => (
+                      {defaultImportFields(importType).map((field) => (
                         <label key={field} className="block">
                           <span className="label-text capitalize">{normalizeErrorText(field)}</span>
                           <select
@@ -612,28 +804,28 @@ export default function PeoplePage() {
                         <table className="min-w-full text-xs">
                           <thead>
                             <tr className="border-b border-gray-200 text-left text-gray-500">
-                              <th className="py-2 pr-3">Student Code</th>
-                              <th className="py-2 pr-3">Name</th>
-                              <th className="py-2 pr-3">Class</th>
-                              <th className="py-2 pr-3">Section</th>
-                              <th className="py-2 pr-3">Father</th>
-                              <th className="py-2">Mobile</th>
+                              {previewColumnsForImport(importType).map((column) => (
+                                <th key={column.key} className="py-2 pr-3">
+                                  {column.label}
+                                </th>
+                              ))}
                             </tr>
                           </thead>
                           <tbody>
                             {(importPreview.preview_rows || []).map((row, idx) => (
                               <tr key={`preview-${idx}`} className="border-b border-gray-100 last:border-0">
-                                <td className="py-2 pr-3 font-medium text-gray-900">{String(row.student_code || "-")}</td>
-                                <td className="py-2 pr-3">{`${String(row.first_name || "")} ${String(row.last_name || "")}`.trim() || "-"}</td>
-                                <td className="py-2 pr-3">{String(row.class_label || "-")}</td>
-                                <td className="py-2 pr-3">{String(row.section_label || "-")}</td>
-                                <td className="py-2 pr-3">{String(row.father_name || "-")}</td>
-                                <td className="py-2">{String(row.mobile_number || "-")}</td>
+                                {previewColumnsForImport(importType).map((column) => (
+                                  <td key={`${idx}-${column.key}`} className="py-2 pr-3">
+                                    {Array.isArray(row[column.key])
+                                      ? String((row[column.key] as unknown[]).join(", "))
+                                      : String(row[column.key] ?? "-")}
+                                  </td>
+                                ))}
                               </tr>
                             ))}
                             {(importPreview.preview_rows || []).length === 0 && (
                               <tr>
-                                <td colSpan={6} className="py-4 text-center text-gray-500">
+                                <td colSpan={previewColumnsForImport(importType).length} className="py-4 text-center text-gray-500">
                                   No valid preview rows yet.
                                 </td>
                               </tr>
@@ -666,6 +858,7 @@ export default function PeoplePage() {
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-gray-500">
+                      <th className="py-2 pr-3">Type</th>
                       <th className="py-2 pr-3">File</th>
                       <th className="py-2 pr-3">Status</th>
                       <th className="py-2 pr-3">Rows</th>
@@ -677,6 +870,7 @@ export default function PeoplePage() {
                   <tbody>
                     {importJobs.map((job) => (
                       <tr key={job.id} className="border-b border-gray-100 last:border-0">
+                        <td className="py-2 pr-3 capitalize">{normalizeErrorText(job.import_type)}</td>
                         <td className="py-2 pr-3">
                           <p className="font-medium text-gray-900">{job.source_file_name || "Uploaded file"}</p>
                           <p className="text-xs text-gray-500 uppercase">{job.source_format}</p>
@@ -716,8 +910,8 @@ export default function PeoplePage() {
                     ))}
                     {importJobs.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-6 text-center text-gray-500">
-                          No import jobs yet.
+                        <td colSpan={7} className="py-6 text-center text-gray-500">
+                          No {normalizeErrorText(importType)} import jobs yet.
                         </td>
                       </tr>
                     )}
@@ -809,10 +1003,13 @@ export default function PeoplePage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, required = false }: { label: string; children: React.ReactNode; required?: boolean }) {
   return (
     <label className="block">
-      <span className="label-text">{label}</span>
+      <span className="label-text">
+        {label}
+        {required ? " *" : ""}
+      </span>
       {children}
     </label>
   );

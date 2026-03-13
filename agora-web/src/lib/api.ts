@@ -1,4 +1,7 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080/api/v1";
+const DEPLOYMENT_DEFAULT_SCHOOL_CODE = process.env.NEXT_PUBLIC_DEFAULT_SCHOOL_CODE || "";
+const DEFAULT_SCHOOL_CODE = DEPLOYMENT_DEFAULT_SCHOOL_CODE || "agora_demo";
+const SCHOOL_CODE_STORAGE_KEY = "agora_school_code";
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -67,6 +70,25 @@ class ApiError extends Error {
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("agora_access_token");
+}
+
+export function getSavedSchoolCode(): string {
+  if (typeof window === "undefined") return DEFAULT_SCHOOL_CODE;
+  return localStorage.getItem(SCHOOL_CODE_STORAGE_KEY) || DEFAULT_SCHOOL_CODE;
+}
+
+export function hasPresetSchoolCode(): boolean {
+  return Boolean(DEPLOYMENT_DEFAULT_SCHOOL_CODE);
+}
+
+export function saveSchoolCode(schoolCode: string) {
+  if (typeof window === "undefined") return;
+  const normalized = schoolCode.trim();
+  if (normalized) {
+    localStorage.setItem(SCHOOL_CODE_STORAGE_KEY, normalized);
+    return;
+  }
+  localStorage.removeItem(SCHOOL_CODE_STORAGE_KEY);
 }
 
 function setTokens(access: string, refresh: string) {
@@ -158,6 +180,7 @@ async function requestBlob(
 
 // ─── Auth ───
 export async function login(schoolCode: string, email: string, password: string) {
+  const normalizedSchoolCode = schoolCode.trim();
   const res = await request<{
     access_token: string;
     refresh_token: string;
@@ -166,10 +189,11 @@ export async function login(schoolCode: string, email: string, password: string)
     user: { id: string; school_id: string; first_name: string; last_name: string; email: string; roles: string[] };
   }>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ school_code: schoolCode, email, password }),
+    body: JSON.stringify({ school_code: normalizedSchoolCode, email, password }),
   });
 
   setTokens(res.data.access_token, res.data.refresh_token);
+  saveSchoolCode(normalizedSchoolCode);
   localStorage.setItem("agora_user", JSON.stringify(res.data.user));
   return res.data;
 }
@@ -491,10 +515,19 @@ export interface AdmissionApplicationDetail {
   }>;
 }
 
-export async function getAdmissionsPipeline(params: { search?: string; limit_per_stage?: number } = {}) {
+export async function getAdmissionsPipeline(params: {
+  search?: string;
+  limit_per_stage?: number;
+  date_from?: string;
+  date_to?: string;
+  academic_year_id?: string;
+} = {}) {
   const query = new URLSearchParams();
   if (params.search) query.set("search", params.search);
   if (params.limit_per_stage) query.set("limit_per_stage", String(params.limit_per_stage));
+  if (params.date_from) query.set("date_from", params.date_from);
+  if (params.date_to) query.set("date_to", params.date_to);
+  if (params.academic_year_id) query.set("academic_year_id", params.academic_year_id);
   return request<AdmissionPipelineData>(`/admissions/pipeline${query.toString() ? `?${query}` : ""}`);
 }
 
@@ -1467,6 +1500,137 @@ export async function getLookupAcademicYears(params: { search?: string; page_siz
   return res.data;
 }
 
+export async function previewPeopleImport(data: {
+  source_file_name: string;
+  source_format?: "csv" | "xlsx" | "xls";
+  file_base64: string;
+  import_type: "students" | "staff" | "parents";
+  mapping?: Record<string, string>;
+  default_academic_year_id?: string;
+}) {
+  const { import_type, ...payload } = data;
+  const res = await request<ImportJobRecord>(`/people/imports/${import_type}/preview`, {
+    method: "POST",
+    body: JSON.stringify({ import_type, ...payload }),
+  });
+  return res.data;
+}
+
+export async function getPeopleMyStudents() {
+  const res = await request<MyLinkedStudentRecord[]>("/people/me/students");
+  return res.data;
+}
+
+export async function getMyReportCardHistory(params: Record<string, string | number | undefined> = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  });
+  return request<FamilyReportCardHistoryPayload>(
+    `/report-cards/mine/history${query.toString() ? `?${query.toString()}` : ""}`
+  );
+}
+
+export async function getExecutiveOverview(params: Record<string, string | number | undefined> = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  });
+  return request<ExecutiveOverviewRecord>(
+    `/reports/executive/overview${query.toString() ? `?${query.toString()}` : ""}`
+  );
+}
+
+export async function getFeesFinanceSummary(params: Record<string, string | number | undefined> = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  });
+  return request<FeesFinanceSummaryRecord>(
+    `/fees/summary${query.toString() ? `?${query.toString()}` : ""}`
+  );
+}
+
+export async function getTutorConfig() {
+  const res = await request<TutorConfig>("/tutor/config");
+  return res.data;
+}
+
+export async function getTutorSessions(params: Record<string, string | number | undefined> = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  });
+  return request<TutorSession[]>(`/tutor/sessions${query.toString() ? `?${query.toString()}` : ""}`);
+}
+
+export async function createTutorSession(data: { topic?: string; subject_id?: string }) {
+  const res = await request<TutorSession>("/tutor/sessions", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function getTutorSession(sessionId: string) {
+  const res = await request<{ session: TutorSession; messages: TutorMessage[] }>(`/tutor/sessions/${sessionId}`);
+  return {
+    ...res.data.session,
+    messages: res.data.messages || [],
+  } as TutorSessionDetail;
+}
+
+export async function sendTutorMessage(
+  sessionId: string,
+  content: string
+): Promise<{
+  user_message: TutorMessage;
+  assistant_message: TutorMessage;
+  session_message_count: number;
+  token_budget: { used: number; remaining: number };
+}> {
+  const res = await request<{
+    user_message: Partial<TutorMessage>;
+    assistant_message: Partial<TutorMessage>;
+    session_message_count: number;
+    token_budget: { used: number; remaining: number };
+  }>(`/tutor/sessions/${sessionId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+  const now = new Date().toISOString();
+  return {
+    ...res.data,
+    user_message: {
+      id: res.data.user_message?.id || `user-${Date.now()}`,
+      session_id: sessionId,
+      role: "user",
+      content: res.data.user_message?.content || content,
+      token_count: res.data.user_message?.token_count ?? null,
+      model: res.data.user_message?.model ?? null,
+      latency_ms: res.data.user_message?.latency_ms ?? null,
+      created_at: res.data.user_message?.created_at || now,
+    },
+    assistant_message: {
+      id: res.data.assistant_message?.id || `assistant-${Date.now()}`,
+      session_id: sessionId,
+      role: "assistant",
+      content: res.data.assistant_message?.content || "",
+      token_count: res.data.assistant_message?.token_count ?? null,
+      model: res.data.assistant_message?.model ?? null,
+      latency_ms: res.data.assistant_message?.latency_ms ?? null,
+      created_at: res.data.assistant_message?.created_at || now,
+    },
+  };
+}
+
+export async function closeTutorSession(sessionId: string) {
+  const res = await request<TutorSession>(`/tutor/sessions/${sessionId}/close`, {
+    method: "POST",
+  });
+  return res.data;
+}
+
 // ─── Timetable ───
 export interface TimetableSlotRow {
   id: string;
@@ -1837,6 +2001,15 @@ export interface HrDashboardSummary {
   pending_adjustments: number;
   pending_leave_requests: number;
   current_month_net_payroll: number;
+  staff_attendance_today?: {
+    total_active_staff: number;
+    marked_staff: number;
+    unmarked_staff: number;
+    present_count: number;
+    late_count: number;
+    absent_count: number;
+    leave_count: number;
+  };
 }
 
 export interface HrSalaryStructureRecord {
@@ -1979,8 +2152,11 @@ export interface HrStaffProfilePayload {
   latest_salary_structure?: Record<string, unknown> | null;
 }
 
-export async function getHrDashboardSummary() {
-  const res = await request<HrDashboardSummary>("/people/hr/dashboard/summary");
+export async function getHrDashboardSummary(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  const res = await request<HrDashboardSummary>(
+    `/people/hr/dashboard/summary${query ? `?${query}` : ""}`
+  );
   return res.data;
 }
 
@@ -2521,4 +2697,631 @@ export async function getDocumentDownloadsReport(
   return request<DocumentDownloadsReportRow[]>(
     `/documents/reports/downloads${suffix ? `?${suffix}` : ""}`
   );
+}
+
+// ─── Class Teacher / Exam Terms / Report Cards / Setup Wizard ───
+export interface PaginationPayload {
+  page: number;
+  page_size: number;
+  total_items: number;
+  total_pages: number;
+}
+
+export interface ClassTeacherStudentRow {
+  id: string;
+  student_code: string;
+  first_name: string;
+  last_name?: string | null;
+  gender?: string | null;
+  date_of_birth?: string | null;
+  roll_no?: number | null;
+  student_user_id?: string | null;
+}
+
+export interface ClassTeacherExamTerm {
+  id: string;
+  name: string;
+  term_type: "midterm" | "final" | "monthly";
+  is_locked: boolean;
+  starts_on?: string | null;
+  ends_on?: string | null;
+}
+
+export interface ClassTeacherMyClassroomPayload {
+  classroom: {
+    id: string;
+    grade_label: string;
+    section_label: string;
+    classroom_code?: string | null;
+    academic_year_id: string;
+    academic_year_name?: string | null;
+    capacity?: number | null;
+  } | null;
+  message?: string;
+  student_count: number;
+  attendance_today: {
+    present_count: number;
+    absent_count: number;
+    late_count: number;
+    leave_count: number;
+    total_marked: number;
+  };
+  subjects: Array<{
+    classroom_subject_id?: string;
+    subject_id: string;
+    subject_name: string;
+    subject_code?: string | null;
+    teacher_id?: string | null;
+    teacher_user_id?: string | null;
+    teacher_first_name?: string | null;
+    teacher_last_name?: string | null;
+  }>;
+  exam_terms: ClassTeacherExamTerm[];
+  marks_completion: Array<{
+    exam_term_id: string;
+    term_name: string;
+    assessment_count: number;
+    score_count: number;
+    expected_scores: number;
+    completion_percentage: number;
+  }>;
+  subject_comment_completion: Array<{
+    subject_id: string;
+    subject_name: string;
+    exam_term_id: string;
+    term_name: string;
+    total_cards: number;
+    commented_rows: number;
+    completion_percentage: number;
+  }>;
+  subject_comment_completion_trend: Array<{
+    exam_term_id: string;
+    term_name: string;
+    term_type: string;
+    total_cards: number;
+    commented_rows: number;
+    expected_rows: number;
+    completion_percentage: number;
+  }>;
+}
+
+export interface ClassTeacherConsolidatedPayload {
+  classroom: {
+    id: string;
+    grade_label: string;
+    section_label: string;
+    classroom_code?: string | null;
+  };
+  exam_term: {
+    id: string;
+    name: string;
+    term_type: string;
+    starts_on?: string | null;
+    ends_on?: string | null;
+    is_locked: boolean;
+  };
+  subjects: Array<{
+    subject_id: string;
+    subject_name: string;
+    subject_code?: string | null;
+    assessment_count: number;
+    total_max_marks: number;
+  }>;
+  students: Array<{
+    student_id: string;
+    full_name: string;
+    roll_no?: number | null;
+    subjects: Array<{
+      subject_id: string;
+      marks_obtained: number;
+      max_marks: number;
+      percentage: number | null;
+      is_complete: boolean;
+    }>;
+  }>;
+  summary: {
+    student_count: number;
+    subject_count: number;
+    score_count: number;
+    expected_scores: number;
+    completion_percentage: number;
+  };
+}
+
+export interface ClassTeacherReportCardHistoryItem {
+  id: string;
+  student_id: string;
+  student_code: string;
+  student_name: string;
+  roll_no?: number | null;
+  status: "draft" | "published";
+  percentage: number | null;
+  grade?: string | null;
+  attendance_present: number;
+  attendance_total: number;
+  attendance_rate: number | null;
+  generated_at: string;
+  published_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ClassTeacherReportCardDetail {
+  id: string;
+  student: {
+    id: string;
+    student_code: string;
+    first_name: string;
+    last_name?: string | null;
+    full_name: string;
+  };
+  classroom: {
+    id: string;
+    grade_label: string;
+    section_label: string;
+    classroom_code?: string | null;
+  };
+  exam_term: {
+    id: string;
+    name: string;
+    term_type: string;
+    starts_on?: string | null;
+    ends_on?: string | null;
+  };
+  grading_scale: {
+    id: string;
+    name: string;
+  };
+  summary: {
+    total_marks_obtained: number | null;
+    total_max_marks: number | null;
+    percentage: number | null;
+    grade?: string | null;
+    attendance_present: number;
+    attendance_total: number;
+    remarks?: string | null;
+    status: "draft" | "published";
+    generated_at: string;
+    published_at?: string | null;
+  };
+  subjects: Array<{
+    id: string;
+    subject_id?: string | null;
+    subject_name: string;
+    marks_obtained: number;
+    max_marks: number;
+    percentage: number | null;
+    grade?: string | null;
+    comment_category?: string | null;
+    teacher_comment?: string | null;
+    sort_order?: number | null;
+  }>;
+}
+
+export interface SetupWizardStepRecord {
+  code: string;
+  label: string;
+  description: string;
+  owner_module: string;
+  auto_completed: boolean;
+  manual_completed: boolean;
+  is_completed: boolean;
+  completed_at?: string | null;
+  completed_by_user_id?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SetupWizardStatusRecord {
+  steps: SetupWizardStepRecord[];
+  total_steps: number;
+  completed_steps: number;
+  completion_percent: number;
+  launch_ready: boolean;
+  launched_at?: string | null;
+  launched_by_user_id?: string | null;
+  launched_snapshot?: unknown;
+}
+
+export interface ExecutiveOverviewRecord {
+  generated_at: string;
+  window: {
+    date_from?: string | null;
+    date_to?: string | null;
+    academic_year_id?: string | null;
+    classroom_id?: string | null;
+    section_id?: string | null;
+    trend_points?: number;
+  };
+  kpis: {
+    attendance_present_rate: number;
+    marks_avg_percentage: number;
+    homework_completion_rate: number;
+    fee_outstanding_total: number;
+    fee_overdue_invoices: number;
+  };
+  attendance_trend: Array<{
+    period_start: string;
+    period_end?: string | null;
+    present_rate: number;
+    present_count?: number;
+    absent_count?: number;
+    late_count?: number;
+  }>;
+  marks_trend: Array<{
+    period_start: string;
+    period_end?: string | null;
+    average_percentage?: number;
+    avg_percentage?: number;
+    score_count?: number;
+  }>;
+  homework_by_classroom: Array<{
+    classroom_id?: string | null;
+    classroom_label?: string | null;
+    completion_rate: number;
+    assigned_count?: number;
+    submitted_count?: number;
+  }>;
+  fee_aging: {
+    total_outstanding: number;
+    overdue_amount: number;
+    overdue_invoices: number;
+  };
+  alerts: Array<{
+    key?: string;
+    severity: "critical" | "warning" | "info";
+    code?: string;
+    label?: string;
+    title?: string;
+    message: string;
+    value?: number | string | null;
+  }>;
+}
+
+export interface FeesFinanceSummaryRecord {
+  generated_at: string;
+  totals: {
+    total_invoices: number;
+    total_due: number;
+    total_paid: number;
+    total_outstanding: number;
+    overdue_amount: number;
+    defaulter_students: number;
+  };
+  status_breakdown: {
+    draft_count: number;
+    issued_count: number;
+    partial_count: number;
+    paid_count: number;
+    overdue_count: number;
+    cancelled_count: number;
+  };
+}
+
+export interface MyLinkedStudentRecord {
+  id: string;
+  student_code: string;
+  first_name: string;
+  last_name?: string | null;
+  relation_type?: string | null;
+  is_primary?: boolean;
+  classroom_id?: string | null;
+  grade_label?: string | null;
+  section_label?: string | null;
+  classroom_code?: string | null;
+  class_teacher_name?: string | null;
+}
+
+export interface FamilyVisibleStudent {
+  id: string;
+  student_code: string;
+  first_name: string;
+  last_name?: string | null;
+  grade_label?: string | null;
+  section_label?: string | null;
+  classroom_code?: string | null;
+}
+
+export interface FamilyReportCardHistoryItem {
+  id: string;
+  student_id: string;
+  status: string;
+  percentage: number | null;
+  grade?: string | null;
+  attendance_present?: number | null;
+  attendance_total?: number | null;
+  attendance_rate?: number | null;
+  generated_at?: string | null;
+  published_at?: string | null;
+  student_code?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  grade_label?: string | null;
+  section_label?: string | null;
+  classroom_label?: string | null;
+  classroom_code?: string | null;
+  exam_term_id?: string | null;
+  exam_term_name?: string | null;
+  exam_term_type?: string | null;
+}
+
+export interface FamilyReportCardHistoryPayload {
+  students: FamilyVisibleStudent[];
+  items: FamilyReportCardHistoryItem[];
+  summary: {
+    total_cards: number;
+    average_percentage: number;
+    latest_published_at?: string | null;
+  };
+}
+
+export interface TutorConfig {
+  id?: string;
+  school_id?: string;
+  is_enabled: boolean;
+  enabled_subjects?: string[];
+  system_prompt_override?: string | null;
+  difficulty_level?: "easy" | "medium" | "hard" | "adaptive";
+  max_messages_per_session?: number;
+  max_sessions_per_day?: number;
+  allowed_roles?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface TutorMessage {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  token_count?: number | null;
+  model?: string | null;
+  latency_ms?: number | null;
+  created_at: string;
+}
+
+export interface TutorSession {
+  id: string;
+  school_id?: string;
+  student_id?: string;
+  user_id?: string;
+  subject_id?: string | null;
+  topic?: string | null;
+  status: "active" | "closed" | "expired";
+  model_used?: string | null;
+  subject_name?: string | null;
+  message_count: number;
+  total_tokens_used?: number;
+  summary?: string | null;
+  started_at: string;
+  closed_at?: string | null;
+  updated_at?: string;
+}
+
+export interface TutorSessionDetail extends TutorSession {
+  messages: TutorMessage[];
+}
+
+function normalizePagination(meta?: ApiResponse["meta"]): PaginationPayload {
+  return {
+    page: Number(meta?.pagination?.page || meta?.page || 1),
+    page_size: Number(meta?.pagination?.page_size || meta?.page_size || 25),
+    total_items: Number(meta?.pagination?.total_items || meta?.total_items || 0),
+    total_pages: Number(meta?.pagination?.total_pages || meta?.total_pages || 1),
+  };
+}
+
+export async function getClassTeacherMyClassroom() {
+  const res = await request<ClassTeacherMyClassroomPayload>("/class-teacher/my-classroom");
+  return res.data;
+}
+
+export async function getClassTeacherStudents() {
+  const res = await request<ClassTeacherStudentRow[]>("/class-teacher/students");
+  return res.data;
+}
+
+export async function getClassTeacherSubjectTeachers() {
+  const res = await request("/class-teacher/subject-teachers");
+  return res.data;
+}
+
+export async function assignClassTeacherSubjectTeacher(data: {
+  subject_id: string;
+  teacher_user_id: string;
+}) {
+  const res = await request("/class-teacher/subject-teachers", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function removeClassTeacherSubjectTeacher(classroomSubjectId: string) {
+  const res = await request(`/class-teacher/subject-teachers/${classroomSubjectId}`, {
+    method: "DELETE",
+  });
+  return res.data;
+}
+
+export async function getExamTerms(params: Record<string, string> = {}) {
+  const query = new URLSearchParams(params).toString();
+  const res = await request<ClassTeacherExamTerm[]>(`/exam-terms${query ? `?${query}` : ""}`);
+  return {
+    data: res.data,
+    pagination: normalizePagination(res.meta),
+  };
+}
+
+export async function createExamTerm(data: {
+  name: string;
+  term_type: "midterm" | "final" | "monthly";
+  academic_year_id: string;
+  starts_on?: string;
+  ends_on?: string;
+}) {
+  const res = await request<ClassTeacherExamTerm>("/exam-terms", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function updateExamTerm(termId: string, data: {
+  name?: string;
+  term_type?: "midterm" | "final" | "monthly";
+  starts_on?: string | null;
+  ends_on?: string | null;
+  is_locked?: boolean;
+}) {
+  const res = await request<ClassTeacherExamTerm>(`/exam-terms/${termId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function deleteExamTerm(termId: string) {
+  const res = await request<{ id: string }>(`/exam-terms/${termId}`, {
+    method: "DELETE",
+  });
+  return res.data;
+}
+
+export async function getReportCardsConsolidated(params: {
+  classroom_id: string;
+  exam_term_id: string;
+}) {
+  const query = new URLSearchParams(params).toString();
+  const res = await request<ClassTeacherConsolidatedPayload>(`/report-cards/consolidated?${query}`);
+  return res.data;
+}
+
+export async function getReportCardHistory(params: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      query.set(key, String(value));
+    }
+  });
+  const res = await request<{
+    classroom: ClassTeacherConsolidatedPayload["classroom"];
+    exam_term: ClassTeacherConsolidatedPayload["exam_term"];
+    items: ClassTeacherReportCardHistoryItem[];
+    kpis: {
+      total_cards: number;
+      published_cards: number;
+      draft_cards: number;
+      average_percentage: number;
+      average_attendance_rate: number;
+      grade_distribution: Array<{
+        grade: string;
+        count: number;
+        percentage: number;
+      }>;
+    };
+  }>(`/report-cards/history?${query.toString()}`);
+  return {
+    data: res.data,
+    pagination: normalizePagination(res.meta),
+  };
+}
+
+export async function getReportCard(reportCardId: string) {
+  const res = await request<ClassTeacherReportCardDetail>(`/report-cards/${reportCardId}`);
+  return res.data;
+}
+
+export async function bulkGenerateReportCards(data: {
+  classroom_id: string;
+  exam_term_id: string;
+  remarks?: string;
+}) {
+  const res = await request<{
+    generated_count: number;
+    report_cards: Array<{
+      id: string;
+      student_id: string;
+      status: string;
+      percentage: number | null;
+      grade?: string | null;
+    }>;
+  }>("/report-cards/bulk-generate", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function updateReportCardSubjectComments(
+  reportCardId: string,
+  data: {
+    comments: Array<{
+      report_card_subject_id: string;
+      comment_category?: string | null;
+      teacher_comment?: string | null;
+    }>;
+  }
+) {
+  const res = await request<{ id: string; updated_count: number }>(`/report-cards/${reportCardId}/subject-comments`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function downloadReportCardPdf(reportCardId: string) {
+  return requestBlob(`/report-cards/${reportCardId}/pdf`);
+}
+
+export async function publishReportCard(reportCardId: string) {
+  const res = await request<{ id: string; status: string; published_at?: string | null }>(
+    `/report-cards/${reportCardId}/publish`,
+    { method: "PATCH" }
+  );
+  return res.data;
+}
+
+export async function unpublishReportCard(reportCardId: string) {
+  const res = await request<{ id: string; status: string; published_at?: string | null }>(
+    `/report-cards/${reportCardId}/unpublish`,
+    { method: "PATCH" }
+  );
+  return res.data;
+}
+
+export async function bulkPublishReportCards(data: { classroom_id: string; exam_term_id: string }) {
+  const res = await request<{ updated_count: number }>("/report-cards/bulk-publish", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function getSetupWizardStatus() {
+  const res = await request<SetupWizardStatusRecord>("/institution/setup-wizard/status");
+  return res.data;
+}
+
+export async function updateSetupWizardStep(
+  stepCode: string,
+  data: { is_completed: boolean; notes?: string; metadata?: Record<string, unknown> }
+) {
+  const res = await request<{ step: unknown; status: SetupWizardStatusRecord }>(
+    `/institution/setup-wizard/steps/${stepCode}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }
+  );
+  return res.data;
+}
+
+export async function launchSetupWizard() {
+  const res = await request<{
+    launched_at?: string | null;
+    launched_by_user_id?: string | null;
+    status: SetupWizardStatusRecord;
+  }>("/institution/setup-wizard/launch", {
+    method: "POST",
+  });
+  return res.data;
 }

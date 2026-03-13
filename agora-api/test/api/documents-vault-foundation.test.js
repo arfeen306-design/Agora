@@ -179,6 +179,7 @@ async function seedDocumentScopeFixtures() {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
   await runSqlFile("database/migrations/20260308_admissions_foundation.sql");
   await runSqlFile("database/migrations/20260308_document_vault_foundation.sql");

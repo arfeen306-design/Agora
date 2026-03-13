@@ -185,6 +185,10 @@ const config = {
       provider: process.env.SMS_PROVIDER || "mock", // mock | webhook
       webhookUrl: process.env.SMS_WEBHOOK_URL || "",
     },
+    whatsapp: {
+      provider: process.env.WHATSAPP_PROVIDER || "mock", // mock | webhook
+      webhookUrl: process.env.WHATSAPP_WEBHOOK_URL || "",
+    },
   },
   reminders: {
     worker: {
@@ -246,6 +250,13 @@ const config = {
     gcsKeyFilename: process.env.GCS_KEY_FILENAME || "",
     gcsClientEmail: process.env.GCS_CLIENT_EMAIL || "",
     gcsPrivateKey: process.env.GCS_PRIVATE_KEY || "",
+  },
+  logLevel: process.env.LOG_LEVEL || "info",
+  ai: {
+    apiKey: process.env.OPENAI_API_KEY || "",
+    model: process.env.AI_TUTOR_MODEL || "gpt-4o-mini",
+    tokenBudgetPerSchool: Number(process.env.AI_TOKEN_BUDGET_PER_SCHOOL || 500000),
+    maxContextTokens: Number(process.env.AI_MAX_CONTEXT_TOKENS || 4096),
   },
 };
 

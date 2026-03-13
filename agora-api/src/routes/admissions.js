@@ -50,12 +50,30 @@ const stageSchema = z.enum(ADMISSION_STATUSES);
 
 const pipelineQuerySchema = z.object({
   search: z.string().trim().min(1).max(120).optional(),
+  date_from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  date_to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  academic_year_id: z.string().uuid().optional(),
   limit_per_stage: z.coerce.number().int().min(1).max(60).default(20),
 });
 
 const listApplicationsQuerySchema = z.object({
   search: z.string().trim().min(1).max(120).optional(),
   status: stageSchema.optional(),
+  date_from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  date_to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  academic_year_id: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   page_size: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -291,6 +309,9 @@ router.get(
   requireRoles("school_admin", "principal", "vice_principal", "front_desk"),
   asyncHandler(async (req, res) => {
     const query = parseSchema(pipelineQuerySchema, req.query, "Invalid admissions pipeline query");
+    if (query.date_from && query.date_to && query.date_from > query.date_to) {
+      throw new AppError(422, "VALIDATION_ERROR", "date_from must be on or before date_to");
+    }
 
     const params = [req.auth.schoolId, ADMISSION_STATUSES];
     let where = `
@@ -308,6 +329,29 @@ router.get(
           OR COALESCE(aa.guardian_name, '') ILIKE $${params.length}
           OR COALESCE(aa.guardian_phone, '') ILIKE $${params.length}
           OR COALESCE(aa.guardian_email, '') ILIKE $${params.length}
+        )
+      `;
+    }
+    if (query.date_from) {
+      params.push(query.date_from);
+      where += ` AND DATE(s.created_at) >= $${params.length}::date `;
+    }
+    if (query.date_to) {
+      params.push(query.date_to);
+      where += ` AND DATE(s.created_at) <= $${params.length}::date `;
+    }
+    if (query.academic_year_id) {
+      params.push(query.academic_year_id);
+      where += `
+        AND (
+          aa.desired_academic_year_id = $${params.length}
+          OR EXISTS (
+            SELECT 1
+            FROM student_enrollments se
+            WHERE se.school_id = s.school_id
+              AND se.student_id = s.id
+              AND se.academic_year_id = $${params.length}
+          )
         )
       `;
     }
@@ -401,6 +445,9 @@ router.get(
   requireRoles("school_admin", "principal", "vice_principal", "front_desk"),
   asyncHandler(async (req, res) => {
     const query = parseSchema(listApplicationsQuerySchema, req.query, "Invalid admissions applications query");
+    if (query.date_from && query.date_to && query.date_from > query.date_to) {
+      throw new AppError(422, "VALIDATION_ERROR", "date_from must be on or before date_to");
+    }
 
     const params = [req.auth.schoolId];
     const where = ["s.school_id = $1"];
@@ -420,6 +467,29 @@ router.get(
           OR COALESCE(aa.guardian_name, '') ILIKE $${params.length}
           OR COALESCE(aa.guardian_phone, '') ILIKE $${params.length}
           OR COALESCE(aa.guardian_email, '') ILIKE $${params.length}
+        )
+      `);
+    }
+    if (query.date_from) {
+      params.push(query.date_from);
+      where.push(`DATE(s.created_at) >= $${params.length}::date`);
+    }
+    if (query.date_to) {
+      params.push(query.date_to);
+      where.push(`DATE(s.created_at) <= $${params.length}::date`);
+    }
+    if (query.academic_year_id) {
+      params.push(query.academic_year_id);
+      where.push(`
+        (
+          aa.desired_academic_year_id = $${params.length}
+          OR EXISTS (
+            SELECT 1
+            FROM student_enrollments se
+            WHERE se.school_id = s.school_id
+              AND se.student_id = s.id
+              AND se.academic_year_id = $${params.length}
+          )
         )
       `);
     }

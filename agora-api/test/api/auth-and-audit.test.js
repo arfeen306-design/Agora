@@ -12,6 +12,7 @@ const deviceApiKey = process.env.ATTENDANCE_DEVICE_API_KEY || "dev-device-key";
 const internalApiKey = process.env.INTERNAL_API_KEY || "dev-internal-key";
 const SCHOOL_ID = "10000000-0000-0000-0000-000000000001";
 const STUDENT_1 = "40000000-0000-0000-0000-000000000001";
+const HASH_TEACH123 = "$2a$10$8npSDRlRr6QwW.lDp4pF.uHz9iZ/txmp/0fuMP88F/zGu7fTZjDEm";
 
 async function jsonRequest(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
@@ -215,7 +216,7 @@ test("teacher projection is auto-healed for teacher-role users", async () => {
       VALUES ($1, $2, $3, $4, $5, $6, TRUE)
       RETURNING id
     `,
-    [SCHOOL_ID, email, `+92000${suffix.replace(/[^0-9]/g, "").padEnd(6, "8")}`, "teach123", "Compat", "Teacher"]
+    [SCHOOL_ID, email, `+92000${suffix.replace(/[^0-9]/g, "").padEnd(6, "8")}`, HASH_TEACH123, "Compat", "Teacher"]
   );
   const userId = userInsert.rows[0].id;
 

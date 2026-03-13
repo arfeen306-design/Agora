@@ -16,6 +16,8 @@ const CLASSROOM_ID = "60000000-0000-0000-0000-000000000001";
 const SUBJECT_ID = "70000000-0000-0000-0000-000000000001";
 const STUDENT_ID = "40000000-0000-0000-0000-000000000001";
 const PARENT_FIXTURE_EMAIL = "parent.fixture.convergence@agora.com";
+const HASH_TEACH123 = "$2a$10$8npSDRlRr6QwW.lDp4pF.uHz9iZ/txmp/0fuMP88F/zGu7fTZjDEm";
+const HASH_PASS123 = "$2a$10$6bjj90IyidJjLa/IBcVPGu0Inpy5Pp.mA9oVUh0PNhXzExQs3l.I2";
 
 async function jsonRequest(pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, options);
@@ -81,7 +83,7 @@ async function seedTeacherWithStaffAssignment({ email, inactive = false }) {
       )
       VALUES ($1, $2, $3, $4, $5, 'Converge', 'Teacher', TRUE)
     `,
-    [userId, SCHOOL_ID, email, `+92009${phoneSuffix}`, password]
+    [userId, SCHOOL_ID, email, `+92009${phoneSuffix}`, HASH_TEACH123]
   );
 
   await pool.query(
@@ -216,13 +218,14 @@ async function ensureScopedStudentAndParentFixtures() {
         last_name,
         is_active
       )
-      VALUES ($1, $2, '+920000001111', 'pass123', 'Parent', 'Fixture', TRUE)
+      VALUES ($1, $2, '+920000001111', $3, 'Parent', 'Fixture', TRUE)
       ON CONFLICT (school_id, email)
       DO UPDATE SET
+        password_hash = EXCLUDED.password_hash,
         is_active = EXCLUDED.is_active
       RETURNING id
     `,
-    [SCHOOL_ID, PARENT_FIXTURE_EMAIL]
+    [SCHOOL_ID, PARENT_FIXTURE_EMAIL, HASH_PASS123]
   );
   const parentUserId = parentUser.rows[0]?.id;
   assert.ok(parentUserId, "Expected parent fixture user");
@@ -282,6 +285,7 @@ async function ensureScopedStudentAndParentFixtures() {
 
 test.before(async () => {
   await runSqlFile("database/migrations/20260307_institution_foundation.sql");
+  await runSqlFile("database/dev_seed.sql");
   await runSqlFile("database/migrations/20260307_institution_seed.sql");
   await runSqlFile("database/migrations/20260308_discipline_foundation.sql");
   await runSqlFile("database/migrations/20260308_timetable_foundation.sql");

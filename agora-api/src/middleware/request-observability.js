@@ -1,4 +1,5 @@
 const { recordRequest } = require("../utils/observability");
+const logger = require("../utils/logger");
 
 function requestObservability(req, res, next) {
   const startedAt = process.hrtime.bigint();
@@ -17,10 +18,8 @@ function requestObservability(req, res, next) {
       userId: req.auth?.userId || null,
     });
 
-    // eslint-disable-next-line no-console
-    console.log(
-      JSON.stringify({
-        level: "info",
+    logger.info(
+      {
         type: "request",
         request_id: res.locals.requestId || null,
         method: req.method,
@@ -29,8 +28,8 @@ function requestObservability(req, res, next) {
         duration_ms: Math.round(durationMs * 100) / 100,
         school_id: req.auth?.schoolId || null,
         user_id: req.auth?.userId || null,
-        at: new Date().toISOString(),
-      })
+      },
+      "request completed"
     );
   });
 

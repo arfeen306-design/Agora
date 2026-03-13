@@ -260,6 +260,108 @@ async function queueOverdueFeeReminders(client) {
   return result.rows[0]?.queued_count || 0;
 }
 
+async function queueLibraryOverdueReminders(client) {
+  const result = await client.query(`
+    WITH candidates AS (
+      SELECT DISTINCT
+        lt.school_id,
+        CASE
+          WHEN lt.member_type = 'student' THEN (
+            SELECT p.user_id FROM parent_students ps
+            JOIN parents p ON p.id = ps.parent_id AND p.school_id = ps.school_id
+            WHERE ps.student_id = lt.member_id AND ps.school_id = lt.school_id
+            LIMIT 1
+          )
+          ELSE lt.member_id
+        END AS notify_user_id,
+        lb.title AS book_title,
+        lt.due_at,
+        lt.id AS transaction_id,
+        ('library_overdue:' || lt.id::text || ':' || to_char(CURRENT_DATE, 'YYYYMMDD')) AS reminder_key
+      FROM library_transactions lt
+      JOIN library_books lb ON lb.id = lt.book_id AND lb.school_id = lt.school_id
+      WHERE lt.status = 'issued'
+        AND lt.due_at < NOW()
+    )
+    , inserted AS (
+      INSERT INTO notifications (school_id, user_id, title, body, channel, status, payload)
+      SELECT
+        c.school_id,
+        c.notify_user_id,
+        'Library Book Overdue',
+        format('"%%s" is overdue. Please return it as soon as possible.', c.book_title),
+        'push'::notification_channel,
+        'queued'::notification_status,
+        jsonb_build_object(
+          'source', 'reminder_worker','reminder_type', 'library_overdue',
+          'reminder_key', c.reminder_key, 'transaction_id', c.transaction_id,
+          'retry_count', 0, 'next_retry_at', NULL
+        )
+      FROM candidates c
+      WHERE c.notify_user_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.school_id = c.school_id AND n.user_id = c.notify_user_id
+            AND n.payload->>'reminder_key' = c.reminder_key
+        )
+      RETURNING id
+    )
+    SELECT COUNT(*)::int AS queued_count FROM inserted
+  `);
+  return result.rows[0]?.queued_count || 0;
+}
+
+async function queueLeavePendingReminders(client) {
+  const result = await client.query(`
+    WITH candidates AS (
+      SELECT DISTINCT
+        lr.school_id,
+        ur.user_id AS admin_user_id,
+        u.first_name || ' ' || COALESCE(u.last_name, '') AS staff_name,
+        lr.leave_type,
+        lr.starts_on,
+        lr.ends_on,
+        lr.id AS request_id,
+        ('leave_pending:' || lr.id::text || ':' || to_char(CURRENT_DATE, 'YYYYMMDD')) AS reminder_key
+      FROM leave_requests lr
+      JOIN users u ON u.id = lr.user_id AND u.school_id = lr.school_id
+      CROSS JOIN LATERAL (
+        SELECT DISTINCT ur2.user_id
+        FROM user_roles ur2
+        JOIN roles r ON r.id = ur2.role_id AND r.code IN ('school_admin', 'hr_admin', 'principal')
+        JOIN users au ON au.id = ur2.user_id AND au.school_id = lr.school_id AND au.is_active = TRUE
+      ) ur
+      WHERE lr.status = 'pending'
+        AND lr.created_at < NOW() - INTERVAL '2 days'
+    )
+    , inserted AS (
+      INSERT INTO notifications (school_id, user_id, title, body, channel, status, payload)
+      SELECT
+        c.school_id,
+        c.admin_user_id,
+        'Pending Leave Request',
+        format('%s has a pending %s leave request (%s to %s). Please review.',
+          c.staff_name, c.leave_type, c.starts_on::text, c.ends_on::text),
+        'in_app'::notification_channel,
+        'queued'::notification_status,
+        jsonb_build_object(
+          'source', 'reminder_worker', 'reminder_type', 'leave_pending_review',
+          'reminder_key', c.reminder_key, 'request_id', c.request_id,
+          'retry_count', 0, 'next_retry_at', NULL
+        )
+      FROM candidates c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.school_id = c.school_id AND n.user_id = c.admin_user_id
+          AND n.payload->>'reminder_key' = c.reminder_key
+      )
+      RETURNING id
+    )
+    SELECT COUNT(*)::int AS queued_count FROM inserted
+  `);
+  return result.rows[0]?.queued_count || 0;
+}
+
 async function runReminderCycle(config) {
   const client = await pool.connect();
   try {
@@ -269,6 +371,8 @@ async function runReminderCycle(config) {
       homework_due: 0,
       attendance_absent: 0,
       fee_overdue: 0,
+      library_overdue: 0,
+      leave_pending: 0,
       total: 0,
     };
 
@@ -282,7 +386,12 @@ async function runReminderCycle(config) {
       summary.fee_overdue = await queueOverdueFeeReminders(client);
     }
 
-    summary.total = summary.homework_due + summary.attendance_absent + summary.fee_overdue;
+    // New reminder jobs — always enabled
+    summary.library_overdue = await queueLibraryOverdueReminders(client);
+    summary.leave_pending = await queueLeavePendingReminders(client);
+
+    summary.total = summary.homework_due + summary.attendance_absent +
+      summary.fee_overdue + summary.library_overdue + summary.leave_pending;
 
     await client.query("COMMIT");
     return summary;

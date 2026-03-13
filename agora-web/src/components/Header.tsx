@@ -56,12 +56,24 @@ export default function Header({ title }: { title: string }) {
               </div>
               <button
                 onClick={logout}
-                className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                className="group mx-2 my-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-2xl border border-rose-100 bg-gradient-to-r from-rose-50 to-red-50 px-4 py-3 text-left transition-all hover:border-rose-200 hover:shadow-sm"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Sign out
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-600 shadow-sm">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-rose-700">Sign out</p>
+                    <p className="text-xs text-rose-500">Securely close this session</p>
+                  </div>
+                </div>
+                <span className="flex h-7 w-14 items-center rounded-full bg-rose-200/80 p-1 shadow-inner">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white shadow transition-transform duration-200 group-hover:translate-x-6">
+                    <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                  </span>
+                </span>
               </button>
             </div>
           )}

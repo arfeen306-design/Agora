@@ -26,6 +26,7 @@
 | 14 | Admin Audit Logs | `/dashboard/admin-audit` | Built |
 | 15 | Observability | `/dashboard/observability` | Built |
 | 16 | Students View | `/dashboard/students` | Built |
+| 17 | First-Time Setup Wizard | `/dashboard/setup-wizard` | Built |
 
 ### Planned Screens (Priority 2)
 
@@ -94,6 +95,7 @@ Institution
   School Profile
   Sections
   Classrooms
+  Setup Wizard
 People
   Staff
   Students
@@ -128,6 +130,7 @@ Institution
   Sections
   Classrooms
   Principal Dashboard
+  Setup Wizard
 People
   Staff
   Students
@@ -209,6 +212,7 @@ Communication
 ```
 Admissions Dashboard
 ─────────────────
+Setup Wizard
 Pipeline
 New Applicant
 People
@@ -226,6 +230,7 @@ Dashboard Overview
 ─────────────────
 People
   Staff
+Setup Wizard
 Communication
   Messaging
   Notifications

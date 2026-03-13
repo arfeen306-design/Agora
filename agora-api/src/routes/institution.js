@@ -26,6 +26,96 @@ const PROFILE_VIEW_ROLES = [
 const PROFILE_MANAGE_ROLES = ["school_admin", "principal", "vice_principal"];
 const SECTION_MANAGE_ROLES = ["school_admin", "principal", "vice_principal", "headmistress"];
 const CLASSROOM_MANAGE_ROLES = ["school_admin", "principal", "vice_principal", "headmistress"];
+const SETUP_WIZARD_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk", "hr_admin"];
+const SETUP_WIZARD_MANAGE_ROLES = ["school_admin", "principal", "vice_principal"];
+const SETUP_WIZARD_STEP_CODES = [
+  "school_profile",
+  "academic_year",
+  "sections",
+  "classrooms",
+  "subjects",
+  "staff_setup",
+  "students",
+  "fee_plans",
+  "grading_system",
+  "timetable",
+  "role_assignment",
+  "notification_settings",
+];
+const SETUP_WIZARD_STEP_DEFINITIONS = [
+  {
+    code: "school_profile",
+    label: "School Profile",
+    description: "Set school contact profile, branch details, and core identity.",
+    owner_module: "institution",
+  },
+  {
+    code: "academic_year",
+    label: "Academic Year",
+    description: "Ensure an active academic year exists and is marked current.",
+    owner_module: "institution",
+  },
+  {
+    code: "sections",
+    label: "Sections",
+    description: "Create active school sections (Pre School, Junior, Middle, Senior, High School).",
+    owner_module: "institution",
+  },
+  {
+    code: "classrooms",
+    label: "Classrooms",
+    description: "Create active classrooms and map them to sections and academic year.",
+    owner_module: "institution",
+  },
+  {
+    code: "subjects",
+    label: "Subjects",
+    description: "Create subjects and assign them to classrooms with teachers.",
+    owner_module: "institution",
+  },
+  {
+    code: "staff_setup",
+    label: "Staff Setup",
+    description: "Create staff records and activate teaching/operations assignments.",
+    owner_module: "people",
+  },
+  {
+    code: "students",
+    label: "Students",
+    description: "Add or import students and ensure active enrollment records are available.",
+    owner_module: "people",
+  },
+  {
+    code: "fee_plans",
+    label: "Fee Plans",
+    description: "Create at least one active fee plan for financial workflows.",
+    owner_module: "fees",
+  },
+  {
+    code: "grading_system",
+    label: "Grading System",
+    description: "Configure grading scales and grade bands for report card generation.",
+    owner_module: "academics",
+  },
+  {
+    code: "timetable",
+    label: "Timetable",
+    description: "Set up class timetables with period definitions and subject-teacher slots.",
+    owner_module: "timetable",
+  },
+  {
+    code: "role_assignment",
+    label: "Role Assignment",
+    description: "Assign leadership and core operational roles for governance.",
+    owner_module: "access_control",
+  },
+  {
+    code: "notification_settings",
+    label: "Notification Settings",
+    description: "Configure notification preferences/channels for school communications.",
+    owner_module: "notifications",
+  },
+];
 
 const profileUpdateSchema = z
   .object({
@@ -132,6 +222,16 @@ const sectionDashboardQuerySchema = z.object({
     .enum(["true", "false"])
     .transform((value) => value === "true")
     .optional(),
+});
+
+const setupStepPathSchema = z.object({
+  stepCode: z.enum(SETUP_WIZARD_STEP_CODES),
+});
+
+const setupStepUpdateSchema = z.object({
+  is_completed: z.boolean(),
+  notes: z.string().trim().max(500).optional(),
+  metadata: z.record(z.any()).default({}),
 });
 
 function parseSchema(schema, input, message = "Invalid request input") {
@@ -288,6 +388,183 @@ async function fetchSchoolProfile(schoolId) {
   );
 
   return result.rows[0] || null;
+}
+
+async function fetchSetupWizardStatus(schoolId) {
+  const summaryResult = await pool.query(
+    `
+      SELECT
+        CASE
+          WHEN
+            COALESCE(NULLIF(TRIM(s.name), ''), '') <> ''
+            AND COALESCE(NULLIF(TRIM(s.branch_name), ''), '') <> ''
+            AND COALESCE(NULLIF(TRIM(s.address_line), ''), '') <> ''
+            AND (
+              COALESCE(NULLIF(TRIM(s.contact_phone), ''), '') <> ''
+              OR COALESCE(NULLIF(TRIM(s.contact_email), ''), '') <> ''
+            )
+          THEN TRUE
+          ELSE FALSE
+        END AS school_profile_ready,
+        EXISTS (
+          SELECT 1
+          FROM academic_years ay
+          WHERE ay.school_id = s.id
+            AND ay.is_current = TRUE
+        ) AS academic_year_ready,
+        EXISTS (
+          SELECT 1
+          FROM school_sections ss
+          WHERE ss.school_id = s.id
+            AND ss.is_active = TRUE
+        ) AS sections_ready,
+        EXISTS (
+          SELECT 1
+          FROM classrooms c
+          WHERE c.school_id = s.id
+            AND c.is_active = TRUE
+        ) AS classrooms_ready,
+        EXISTS (
+          SELECT 1
+          FROM staff_profiles sp
+          WHERE sp.school_id = s.id
+            AND sp.employment_status = 'active'
+        ) AS staff_setup_ready,
+        EXISTS (
+          SELECT 1
+          FROM students st
+          WHERE st.school_id = s.id
+            AND st.status = 'active'
+        ) AS students_ready,
+        EXISTS (
+          SELECT 1
+          FROM fee_plans fp
+          WHERE fp.school_id = s.id
+            AND fp.is_active = TRUE
+        ) AS fee_plans_ready,
+        EXISTS (
+          SELECT 1
+          FROM subjects sub
+          WHERE sub.school_id = s.id
+        ) AS subjects_ready,
+        EXISTS (
+          SELECT 1
+          FROM grading_scales gs
+          WHERE gs.school_id = s.id
+        ) AS grading_system_ready,
+        EXISTS (
+          SELECT 1
+          FROM timetable_periods tp
+          WHERE tp.school_id = s.id
+        ) AS timetable_ready,
+        (
+          s.principal_user_id IS NOT NULL
+          OR s.vice_principal_user_id IS NOT NULL
+          OR EXISTS (
+            SELECT 1
+            FROM users u
+            JOIN user_roles ur
+              ON ur.user_id = u.id
+            JOIN roles r
+              ON r.id = ur.role_id
+            WHERE u.school_id = s.id
+              AND r.code IN ('principal', 'vice_principal', 'headmistress')
+          )
+        ) AS role_assignment_ready,
+        (
+          s.attendance_rules ? 'notifications_enabled'
+          OR s.attendance_rules ? 'notification_channels'
+          OR s.attendance_rules ? 'notification_rules'
+        ) AS notification_settings_ready
+      FROM schools s
+      WHERE s.id = $1
+      LIMIT 1
+    `,
+    [schoolId]
+  );
+
+  const auto = summaryResult.rows[0];
+  if (!auto) {
+    throw new AppError(404, "NOT_FOUND", "School not found for setup wizard");
+  }
+
+  const [manualStepsResult, launchResult] = await Promise.all([
+    pool.query(
+      `
+        SELECT
+          step_code,
+          is_completed,
+          completed_at,
+          completed_by_user_id,
+          notes,
+          metadata
+        FROM school_onboarding_steps
+        WHERE school_id = $1
+      `,
+      [schoolId]
+    ),
+    pool.query(
+      `
+        SELECT
+          school_id,
+          launched_at,
+          launched_by_user_id,
+          checklist_snapshot
+        FROM school_onboarding_launches
+        WHERE school_id = $1
+        LIMIT 1
+      `,
+      [schoolId]
+    ),
+  ]);
+
+  const manualByStep = new Map(
+    manualStepsResult.rows.map((row) => [row.step_code, row])
+  );
+  const autoByStep = {
+    school_profile: Boolean(auto.school_profile_ready),
+    academic_year: Boolean(auto.academic_year_ready),
+    sections: Boolean(auto.sections_ready),
+    classrooms: Boolean(auto.classrooms_ready),
+    subjects: Boolean(auto.subjects_ready),
+    staff_setup: Boolean(auto.staff_setup_ready),
+    students: Boolean(auto.students_ready),
+    fee_plans: Boolean(auto.fee_plans_ready),
+    grading_system: Boolean(auto.grading_system_ready),
+    timetable: Boolean(auto.timetable_ready),
+    role_assignment: Boolean(auto.role_assignment_ready),
+    notification_settings: Boolean(auto.notification_settings_ready),
+  };
+
+  const steps = SETUP_WIZARD_STEP_DEFINITIONS.map((definition) => {
+    const manual = manualByStep.get(definition.code) || null;
+    const autoCompleted = Boolean(autoByStep[definition.code]);
+    const manualCompleted = Boolean(manual?.is_completed);
+    return {
+      ...definition,
+      auto_completed: autoCompleted,
+      manual_completed: manualCompleted,
+      is_completed: autoCompleted || manualCompleted,
+      completed_at: manual?.completed_at || null,
+      completed_by_user_id: manual?.completed_by_user_id || null,
+      notes: manual?.notes || null,
+      metadata: manual?.metadata || {},
+    };
+  });
+
+  const completedSteps = steps.filter((step) => step.is_completed).length;
+  const launch = launchResult.rows[0] || null;
+
+  return {
+    steps,
+    total_steps: steps.length,
+    completed_steps: completedSteps,
+    completion_percent: Number(((completedSteps / Math.max(steps.length, 1)) * 100).toFixed(1)),
+    launch_ready: completedSteps === steps.length,
+    launched_at: launch?.launched_at || null,
+    launched_by_user_id: launch?.launched_by_user_id || null,
+    launched_snapshot: launch?.checklist_snapshot || null,
+  };
 }
 
 router.get(
@@ -977,6 +1254,161 @@ router.patch(
     } finally {
       client.release();
     }
+  })
+);
+
+router.get(
+  "/institution/setup-wizard/status",
+  requireAuth,
+  requireRoles(...SETUP_WIZARD_VIEW_ROLES),
+  asyncHandler(async (req, res) => {
+    const status = await fetchSetupWizardStatus(req.auth.schoolId);
+    return success(res, status, 200);
+  })
+);
+
+router.patch(
+  "/institution/setup-wizard/steps/:stepCode",
+  requireAuth,
+  requireRoles(...SETUP_WIZARD_MANAGE_ROLES),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(setupStepPathSchema, req.params, "Invalid setup wizard step code");
+    const body = parseSchema(
+      setupStepUpdateSchema,
+      req.body,
+      "Invalid setup wizard step update payload"
+    );
+
+    const upserted = await pool.query(
+      `
+        INSERT INTO school_onboarding_steps (
+          school_id,
+          step_code,
+          is_completed,
+          completed_at,
+          completed_by_user_id,
+          notes,
+          metadata
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          CASE WHEN $3 THEN NOW() ELSE NULL END,
+          CASE WHEN $3 THEN $4::uuid ELSE NULL END,
+          $5,
+          $6::jsonb
+        )
+        ON CONFLICT (school_id, step_code)
+        DO UPDATE SET
+          is_completed = EXCLUDED.is_completed,
+          completed_at = CASE WHEN EXCLUDED.is_completed THEN NOW() ELSE NULL END,
+          completed_by_user_id = CASE WHEN EXCLUDED.is_completed THEN EXCLUDED.completed_by_user_id::uuid ELSE NULL END,
+          notes = EXCLUDED.notes,
+          metadata = EXCLUDED.metadata,
+          updated_at = NOW()
+        RETURNING *
+      `,
+      [
+        req.auth.schoolId,
+        path.stepCode,
+        body.is_completed,
+        req.auth.userId,
+        body.notes || null,
+        JSON.stringify(body.metadata || {}),
+      ]
+    );
+
+    const status = await fetchSetupWizardStatus(req.auth.schoolId);
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "institution.setup_wizard.step.updated",
+      entityName: "school_onboarding_steps",
+      entityId: upserted.rows[0]?.id || null,
+      metadata: {
+        step_code: path.stepCode,
+        is_completed: body.is_completed,
+      },
+    });
+
+    return success(
+      res,
+      {
+        step: upserted.rows[0] || null,
+        status,
+      },
+      200
+    );
+  })
+);
+
+router.post(
+  "/institution/setup-wizard/launch",
+  requireAuth,
+  requireRoles(...SETUP_WIZARD_MANAGE_ROLES),
+  asyncHandler(async (req, res) => {
+    const status = await fetchSetupWizardStatus(req.auth.schoolId);
+    const missingSteps = status.steps.filter((step) => !step.is_completed);
+
+    if (missingSteps.length > 0) {
+      throw new AppError(
+        422,
+        "VALIDATION_ERROR",
+        "Cannot launch setup wizard while required steps are incomplete",
+        missingSteps.map((step) => ({
+          field: step.code,
+          issue: "step_incomplete",
+        }))
+      );
+    }
+
+    const launched = await pool.query(
+      `
+        INSERT INTO school_onboarding_launches (
+          school_id,
+          launched_at,
+          launched_by_user_id,
+          checklist_snapshot
+        )
+        VALUES ($1, NOW(), $2::uuid, $3::jsonb)
+        ON CONFLICT (school_id)
+        DO UPDATE SET
+          launched_at = EXCLUDED.launched_at,
+          launched_by_user_id = EXCLUDED.launched_by_user_id,
+          checklist_snapshot = EXCLUDED.checklist_snapshot,
+          updated_at = NOW()
+        RETURNING *
+      `,
+      [req.auth.schoolId, req.auth.userId, JSON.stringify(status.steps)]
+    );
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "institution.setup_wizard.launched",
+      entityName: "school_onboarding_launches",
+      entityId: req.auth.schoolId,
+      metadata: {
+        completed_steps: status.completed_steps,
+        total_steps: status.total_steps,
+      },
+    });
+
+    return success(
+      res,
+      {
+        launch: launched.rows[0] || null,
+        status: {
+          ...status,
+          launched_at: launched.rows[0]?.launched_at || null,
+          launched_by_user_id: launched.rows[0]?.launched_by_user_id || null,
+          launched_snapshot: launched.rows[0]?.checklist_snapshot || null,
+        },
+      },
+      200
+    );
   })
 );
 

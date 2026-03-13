@@ -25,6 +25,28 @@ import {
 const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
 const ADMISSIONS_ADMIT_ROLES = ["school_admin", "front_desk"];
 const ADMISSIONS_MANAGE_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
+const TRANSITION_ROLE_MAP: Partial<Record<AdmissionStatus, Partial<Record<AdmissionStatus, string[]>>>> = {
+  inquiry: {
+    applied: ["school_admin", "front_desk"],
+  },
+  applied: {
+    under_review: ["school_admin", "front_desk"],
+  },
+  under_review: {
+    test_scheduled: ["school_admin", "principal", "vice_principal"],
+    accepted: ["school_admin", "principal", "vice_principal"],
+    rejected: ["school_admin", "principal", "vice_principal"],
+    waitlisted: ["school_admin", "principal", "vice_principal"],
+  },
+  test_scheduled: {
+    accepted: ["school_admin", "principal", "vice_principal"],
+    rejected: ["school_admin", "principal", "vice_principal"],
+  },
+  waitlisted: {
+    accepted: ["school_admin", "principal", "vice_principal"],
+    rejected: ["school_admin", "principal", "vice_principal"],
+  },
+};
 
 function hasRole(roles: string[] = [], allowed: string[]) {
   return allowed.some((role) => roles.includes(role));
@@ -45,6 +67,14 @@ function nextStageChoices(current: AdmissionStatus): AdmissionStatus[] {
     waitlisted: ["accepted", "rejected"],
   };
   return graph[current] || [];
+}
+
+function nextStageChoicesForRoles(current: AdmissionStatus, roles: string[] = []): AdmissionStatus[] {
+  const options = nextStageChoices(current);
+  return options.filter((status) => {
+    const allowedRoles = TRANSITION_ROLE_MAP[current]?.[status] || [];
+    return allowedRoles.some((role) => roles.includes(role));
+  });
 }
 
 function formatDateTime(value?: string | null) {
@@ -143,7 +173,11 @@ export default function ApplicantDetailPage() {
 
   const currentStatus = detail?.application.current_status || "inquiry";
   const admissionApplicationId = detail?.application.application_id || "";
-  const stageOptions = useMemo(() => nextStageChoices(currentStatus), [currentStatus]);
+  const stageOptions = useMemo(() => nextStageChoicesForRoles(currentStatus, roles), [currentStatus, roles]);
+  const stageBlockedByRole = useMemo(
+    () => nextStageChoices(currentStatus).length > 0 && stageOptions.length === 0,
+    [currentStatus, stageOptions]
+  );
   const stageProgress = useMemo(() => {
     const idx = ADMISSION_STAGE_ORDER.indexOf(currentStatus);
     if (idx < 0) return 5;
@@ -373,9 +407,16 @@ export default function ApplicantDetailPage() {
             <article className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <h3 className="text-lg font-semibold text-gray-900">Change Stage</h3>
               {stageOptions.length === 0 ? (
-                <p className="mt-3 text-sm text-gray-500">
-                  No stage transition available for <strong>{ADMISSION_STAGE_LABEL[currentStatus]}</strong>.
-                </p>
+                <div className="mt-3 space-y-2 text-sm">
+                  <p className="text-gray-500">
+                    No stage transition available for <strong>{ADMISSION_STAGE_LABEL[currentStatus]}</strong>.
+                  </p>
+                  {stageBlockedByRole && (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                      This stage now needs approval from school leadership. Front desk can create inquiries, move them into review, and complete admission after acceptance.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <form className="mt-3 space-y-3" onSubmit={handleStageSubmit}>
                   <label className="block">

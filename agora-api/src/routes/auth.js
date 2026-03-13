@@ -59,11 +59,10 @@ function isBcryptHash(value) {
 }
 
 async function verifyPassword(password, storedHash) {
-  if (isBcryptHash(storedHash)) {
-    return bcrypt.compare(password, storedHash);
+  if (!isBcryptHash(storedHash)) {
+    return false;
   }
-  // Dev fallback for non-hashed seed data. Replace with hashed values in production.
-  return password === storedHash;
+  return bcrypt.compare(password, storedHash);
 }
 
 async function getUserByLogin(schoolCode, email) {

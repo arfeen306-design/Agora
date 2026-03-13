@@ -181,6 +181,10 @@ const attendanceSummaryQuerySchema = z.object({
   month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
 });
 
+const hrDashboardSummaryQuerySchema = z.object({
+  month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+});
+
 const salarySlipQuerySchema = z.object({
   format: z.enum(["json", "pdf"]).default("json"),
 });
@@ -640,7 +644,8 @@ router.get(
   requireAuth,
   requireRoles("school_admin", "principal", "vice_principal", "hr_admin", "accountant"),
   asyncHandler(async (req, res) => {
-    const monthRange = safeMonthRange();
+    const query = parseSchema(hrDashboardSummaryQuerySchema, req.query, "Invalid HR dashboard summary query");
+    const monthRange = safeMonthRange(query.month);
 
     const summary = await pool.query(
       `
@@ -658,18 +663,84 @@ router.get(
             WHERE pr.school_id = $1
               AND pp.period_start <= $3
               AND pp.period_end >= $2
-          ) AS current_month_net_payroll
+          ) AS current_month_net_payroll,
+          (
+            SELECT COUNT(DISTINCT sal.staff_profile_id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = $1
+              AND sal.attendance_date = CURRENT_DATE
+              AND sp.employment_status = 'active'
+          ) AS staff_marked_today,
+          (
+            SELECT COUNT(DISTINCT sal.staff_profile_id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = $1
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'present'
+              AND sp.employment_status = 'active'
+          ) AS staff_present_today,
+          (
+            SELECT COUNT(DISTINCT sal.staff_profile_id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = $1
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'late'
+              AND sp.employment_status = 'active'
+          ) AS staff_late_today,
+          (
+            SELECT COUNT(DISTINCT sal.staff_profile_id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = $1
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'absent'
+              AND sp.employment_status = 'active'
+          ) AS staff_absent_today,
+          (
+            SELECT COUNT(DISTINCT sal.staff_profile_id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = $1
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'leave'
+              AND sp.employment_status = 'active'
+          ) AS staff_leave_today
       `,
       [req.auth.schoolId, monthRange.start, monthRange.end]
     );
 
+    const activeStaff = Number(summary.rows[0]?.active_staff || 0);
+    const markedStaff = Number(summary.rows[0]?.staff_marked_today || 0);
+
     return success(res, {
       month: monthRange.label,
-      active_staff: Number(summary.rows[0]?.active_staff || 0),
+      active_staff: activeStaff,
       open_payroll_periods: Number(summary.rows[0]?.open_payroll_periods || 0),
       pending_adjustments: Number(summary.rows[0]?.pending_adjustments || 0),
       pending_leave_requests: Number(summary.rows[0]?.pending_leave_requests || 0),
       current_month_net_payroll: toMoney(summary.rows[0]?.current_month_net_payroll || 0),
+      staff_attendance_today: {
+        total_active_staff: activeStaff,
+        marked_staff: markedStaff,
+        unmarked_staff: Math.max(0, activeStaff - markedStaff),
+        present_count: Number(summary.rows[0]?.staff_present_today || 0),
+        late_count: Number(summary.rows[0]?.staff_late_today || 0),
+        absent_count: Number(summary.rows[0]?.staff_absent_today || 0),
+        leave_count: Number(summary.rows[0]?.staff_leave_today || 0),
+      },
     });
   })
 );
@@ -2044,4 +2115,197 @@ router.get(
   })
 );
 
+// ─── Teacher / Staff Leave Self-Service ─────────────────────────────
+
+const SELF_SERVICE_ROLES = ["teacher", "school_admin", "hr_admin", "principal", "vice_principal", "accountant"];
+
+const selfLeaveRequestSchema = z.object({
+  leave_type: z.enum(["casual", "sick", "annual", "maternity", "paternity", "unpaid", "other"]).default("casual"),
+  starts_on: z.string().date(),
+  ends_on: z.string().date(),
+  total_days: z.coerce.number().positive().max(365).optional(),
+  reason: z.string().trim().max(2000).optional(),
+}).superRefine((data, ctx) => {
+  if (data.ends_on < data.starts_on) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "ends_on must be on or after starts_on", path: ["ends_on"] });
+  }
+});
+
+const leaveRequestListQuery = z.object({
+  status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const leaveApprovalSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  review_notes: z.string().trim().max(1000).optional(),
+});
+
+const leaveRequestPathSchema = z.object({ requestId: z.string().uuid() });
+
+// GET /people/hr/my/leave-balance
+router.get(
+  "/people/hr/my/leave-balance",
+  requireAuth,
+  requireRoles(...SELF_SERVICE_ROLES),
+  asyncHandler(async (req, res) => {
+    const staffProfileId = await getStaffProfileByUserId(req.auth.schoolId, req.auth.userId);
+    if (!staffProfileId) throw new AppError(404, "NOT_FOUND", "Staff profile not found");
+
+    const result = await pool.query(
+      `
+        SELECT
+          leave_type,
+          COUNT(*)::int AS total_requests,
+          COUNT(*) FILTER (WHERE status = 'approved')::int AS approved,
+          COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+          COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected,
+          COALESCE(SUM(total_days) FILTER (WHERE status = 'approved'), 0)::numeric AS approved_days
+        FROM leave_requests
+        WHERE school_id = $1 AND staff_profile_id = $2
+          AND starts_on >= DATE_TRUNC('year', CURRENT_DATE)
+        GROUP BY leave_type
+        ORDER BY leave_type
+      `,
+      [req.auth.schoolId, staffProfileId]
+    );
+    return success(res, result.rows);
+  })
+);
+
+// POST /people/hr/my/leave-requests
+router.post(
+  "/people/hr/my/leave-requests",
+  requireAuth,
+  requireRoles(...SELF_SERVICE_ROLES),
+  asyncHandler(async (req, res) => {
+    const body = parseSchema(selfLeaveRequestSchema, req.body, "Invalid leave request");
+
+    const staffProfileId = await getStaffProfileByUserId(req.auth.schoolId, req.auth.userId);
+    if (!staffProfileId) throw new AppError(404, "NOT_FOUND", "Staff profile not found");
+
+    // Calculate total days if not provided
+    const totalDays = body.total_days || Math.max(1,
+      Math.ceil((new Date(body.ends_on) - new Date(body.starts_on)) / (1000 * 60 * 60 * 24)) + 1
+    );
+
+    const result = await pool.query(
+      `
+        INSERT INTO leave_requests (school_id, staff_profile_id, user_id, leave_type, starts_on, ends_on, total_days, reason)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *
+      `,
+      [req.auth.schoolId, staffProfileId, req.auth.userId, body.leave_type, body.starts_on, body.ends_on, totalDays, body.reason || null]
+    );
+
+    auditEvent({
+      auth: req.auth,
+      action: "hr.leave_request.created",
+      entityName: "leave_requests",
+      entityId: result.rows[0].id,
+      metadata: { leave_type: body.leave_type, starts_on: body.starts_on, ends_on: body.ends_on },
+    });
+
+    return success(res, result.rows[0], 201);
+  })
+);
+
+// GET /people/hr/my/leave-requests
+router.get(
+  "/people/hr/my/leave-requests",
+  requireAuth,
+  requireRoles(...SELF_SERVICE_ROLES),
+  asyncHandler(async (req, res) => {
+    const query = parseSchema(leaveRequestListQuery, req.query);
+
+    const staffProfileId = await getStaffProfileByUserId(req.auth.schoolId, req.auth.userId);
+    if (!staffProfileId) throw new AppError(404, "NOT_FOUND", "Staff profile not found");
+
+    const params = [req.auth.schoolId, staffProfileId];
+    const where = ["lr.school_id = $1", "lr.staff_profile_id = $2"];
+
+    if (query.status) { params.push(query.status); where.push(`lr.status = $${params.length}`); }
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM leave_requests lr WHERE ${where.join(" AND ")}`, params
+    );
+    const totalItems = countResult.rows[0]?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(totalItems / query.page_size));
+    const offset = (query.page - 1) * query.page_size;
+
+    const result = await pool.query(
+      `
+        SELECT lr.*,
+          ru.first_name AS reviewed_by_first_name, ru.last_name AS reviewed_by_last_name
+        FROM leave_requests lr
+        LEFT JOIN users ru ON ru.id = lr.reviewed_by_user_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY lr.created_at DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `,
+      [...params, query.page_size, offset]
+    );
+    return success(res, result.rows, 200, {
+      pagination: { page: query.page, page_size: query.page_size, total_items: totalItems, total_pages: totalPages },
+    });
+  })
+);
+
+// DELETE /people/hr/my/leave-requests/:requestId
+router.delete(
+  "/people/hr/my/leave-requests/:requestId",
+  requireAuth,
+  requireRoles(...SELF_SERVICE_ROLES),
+  asyncHandler(async (req, res) => {
+    const { requestId } = parseSchema(leaveRequestPathSchema, req.params);
+
+    const result = await pool.query(
+      `
+        UPDATE leave_requests
+        SET status = 'cancelled', updated_at = NOW()
+        WHERE school_id = $1 AND id = $2 AND user_id = $3 AND status = 'pending'
+        RETURNING id
+      `,
+      [req.auth.schoolId, requestId, req.auth.userId]
+    );
+    if (!result.rows[0]) throw new AppError(404, "NOT_FOUND", "Pending leave request not found");
+    return success(res, { cancelled: true });
+  })
+);
+
+// PATCH /people/hr/leave-requests/:requestId/approve
+router.patch(
+  "/people/hr/leave-requests/:requestId/approve",
+  requireAuth,
+  requireRoles("school_admin", "hr_admin", "principal"),
+  asyncHandler(async (req, res) => {
+    const { requestId } = parseSchema(leaveRequestPathSchema, req.params);
+    const body = parseSchema(leaveApprovalSchema, req.body, "Invalid approval");
+
+    const result = await pool.query(
+      `
+        UPDATE leave_requests
+        SET status = $3, reviewed_by_user_id = $4, reviewed_at = NOW(),
+            review_notes = $5, updated_at = NOW()
+        WHERE school_id = $1 AND id = $2 AND status = 'pending'
+        RETURNING *
+      `,
+      [req.auth.schoolId, requestId, body.status, req.auth.userId, body.review_notes || null]
+    );
+    if (!result.rows[0]) throw new AppError(404, "NOT_FOUND", "Pending leave request not found");
+
+    auditEvent({
+      auth: req.auth,
+      action: `hr.leave_request.${body.status}`,
+      entityName: "leave_requests",
+      entityId: requestId,
+      metadata: { status: body.status, review_notes: body.review_notes },
+    });
+
+    return success(res, result.rows[0]);
+  })
+);
+
 module.exports = router;
+

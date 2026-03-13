@@ -16,6 +16,7 @@ const router = express.Router();
 const listAssessmentsQuerySchema = z.object({
   classroom_id: z.string().uuid().optional(),
   subject_id: z.string().uuid().optional(),
+  exam_term_id: z.string().uuid().optional(),
   assessment_type: z.string().trim().min(1).optional(),
   date_from: z
     .string()
@@ -32,6 +33,7 @@ const listAssessmentsQuerySchema = z.object({
 const createAssessmentSchema = z.object({
   classroom_id: z.string().uuid(),
   subject_id: z.string().uuid().optional(),
+  exam_term_id: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(200),
   assessment_type: z.string().trim().min(1).max(60),
   max_marks: z.number().positive(),
@@ -45,6 +47,7 @@ const updateAssessmentSchema = z
     max_marks: z.number().positive().optional(),
     assessment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     subject_id: z.string().uuid().nullable().optional(),
+    exam_term_id: z.string().uuid().nullable().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field is required",
@@ -114,6 +117,14 @@ async function subjectExists(schoolId, subjectId) {
   return Boolean(result.rows[0]);
 }
 
+async function examTermExists(schoolId, examTermId) {
+  const result = await pool.query("SELECT id FROM exam_terms WHERE school_id = $1 AND id = $2 LIMIT 1", [
+    schoolId,
+    examTermId,
+  ]);
+  return Boolean(result.rows[0]);
+}
+
 async function ensureTeacherCanManageClassroom({ auth, classroomId }) {
   if (hasRole(auth, "school_admin")) return;
   if (!hasRole(auth, "teacher")) {
@@ -135,6 +146,7 @@ async function getAssessmentById({ schoolId, assessmentId }) {
         school_id,
         classroom_id,
         subject_id,
+        exam_term_id,
         title,
         assessment_type,
         max_marks,
@@ -278,6 +290,10 @@ router.get(
       params.push(query.subject_id);
       where.push(`a.subject_id = $${params.length}`);
     }
+    if (query.exam_term_id) {
+      params.push(query.exam_term_id);
+      where.push(`a.exam_term_id = $${params.length}`);
+    }
     if (query.assessment_type) {
       params.push(query.assessment_type);
       where.push(`a.assessment_type = $${params.length}`);
@@ -388,6 +404,7 @@ router.get(
           a.id,
           a.classroom_id,
           a.subject_id,
+          a.exam_term_id,
           a.title,
           a.assessment_type,
           a.max_marks,
@@ -441,23 +458,32 @@ router.post(
       }
     }
 
+    if (body.exam_term_id) {
+      const examTermOk = await examTermExists(req.auth.schoolId, body.exam_term_id);
+      if (!examTermOk) {
+        throw new AppError(404, "NOT_FOUND", "Exam term not found for this school");
+      }
+    }
+
     const insertResult = await pool.query(
       `
         INSERT INTO assessments (
           school_id,
           classroom_id,
           subject_id,
+          exam_term_id,
           title,
           assessment_type,
           max_marks,
           assessment_date,
           created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING
           id,
           classroom_id,
           subject_id,
+          exam_term_id,
           title,
           assessment_type,
           max_marks,
@@ -468,6 +494,7 @@ router.post(
         req.auth.schoolId,
         body.classroom_id,
         body.subject_id || null,
+        body.exam_term_id || null,
         body.title,
         body.assessment_type,
         body.max_marks,
@@ -512,6 +539,13 @@ router.patch(
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, "exam_term_id") && body.exam_term_id) {
+      const examTermOk = await examTermExists(req.auth.schoolId, body.exam_term_id);
+      if (!examTermOk) {
+        throw new AppError(404, "NOT_FOUND", "Exam term not found for this school");
+      }
+    }
+
     const setClauses = [];
     const values = [];
 
@@ -535,6 +569,10 @@ router.patch(
       values.push(body.subject_id);
       setClauses.push(`subject_id = $${values.length}`);
     }
+    if (Object.prototype.hasOwnProperty.call(body, "exam_term_id")) {
+      values.push(body.exam_term_id);
+      setClauses.push(`exam_term_id = $${values.length}`);
+    }
 
     values.push(path.assessmentId);
     const updateResult = await pool.query(
@@ -546,6 +584,7 @@ router.patch(
           id,
           classroom_id,
           subject_id,
+          exam_term_id,
           title,
           assessment_type,
           max_marks,

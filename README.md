@@ -6,17 +6,16 @@ This folder is the single source of truth for the Agora project.
 
 - `api/`: API contract and OpenAPI spec
 - `database/`: PostgreSQL schema and migrations
-- `agora-api/`: Node.js backend
-- `agora-web/`: Teacher/Admin web app
-- `agora-mobile/`: Parent/Student mobile app
+- `agora-api/`: Node.js backend (production entry point)
+- `agora-web/`: Teacher/Admin web app (Next.js 14)
+- `agora-mobile/`: Parent/Student mobile app (Flutter)
 - `infra/`: Terraform infra modules
 - `scripts/`: launch and smoke-check scripts
 
 ## Current Phase
 
+- Phase 0 cleanup completed: Flask prototype removed, pino logger added, AI config prepared
 - Backend milestones through Step 29 completed
-- Step 27 polish: runtime secret-source visibility added to internal observability
-- Step 28 UX polish: students/reports pages now use saved filters, lookup dropdowns, and improved table UX
 - Step 29 launch readiness: `scripts/prelaunch-check.sh` added for pre-go-live validation
 
 ## CI Workflows
@@ -31,15 +30,14 @@ This folder is the single source of truth for the Agora project.
 ## Quick Start (Backend)
 
 ```bash
-cd /Users/admin/Desktop/Agora/agora-api
+cd agora-api
 cp .env.example .env
 npm install
 npm run dev
 ```
 
-## Launch Smoke Check (Step 29)
+## Launch Smoke Check
 
 ```bash
-cd /Users/admin/Desktop/Agora
 INTERNAL_API_KEY="<your-internal-key>" ./scripts/prelaunch-check.sh
 ```

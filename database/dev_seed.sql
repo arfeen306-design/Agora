@@ -1,3 +1,13 @@
+-- ============================================================
+-- WARNING: DEVELOPMENT SEED DATA ONLY
+-- ============================================================
+-- This file inserts test users, students, attendance, homework,
+-- and assessment data for LOCAL DEVELOPMENT and CI testing.
+--
+-- DO NOT RUN THIS FILE AGAINST A PRODUCTION DATABASE.
+-- All user passwords below are bcrypt-hashed dev-only values.
+-- ============================================================
+--
 -- Agora development seed data
 -- Apply after agora_schema.sql
 
@@ -24,7 +34,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'admin@agora.com',
     '+920000000001',
-    'admin123',
+    '$2a$10$5jPzs6GWf4P6/3wHq690TOhs9vsg4F1LmtFixJTIx21aQQuw5igpi',
     'Agora',
     'Admin',
     TRUE
@@ -34,7 +44,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'teacher1@agora.com',
     '+920000000002',
-    'teach123',
+    '$2a$10$8npSDRlRr6QwW.lDp4pF.uHz9iZ/txmp/0fuMP88F/zGu7fTZjDEm',
     'Areeba',
     'Khan',
     TRUE
@@ -44,7 +54,7 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'student1@agora.com',
     '+920000000004',
-    'student123',
+    '$2a$10$IFDV4FPYvHZ9h87saTWNY.VLI0DMlLkiuk9BiiIeAverQTwuWvZLy',
     'Zain',
     'Ahmed',
     TRUE
@@ -54,12 +64,19 @@ VALUES
     '10000000-0000-0000-0000-000000000001',
     'parent1@agora.com',
     '+920000000003',
-    'pass123',
+    '$2a$10$6bjj90IyidJjLa/IBcVPGu0Inpy5Pp.mA9oVUh0PNhXzExQs3l.I2',
     'Ali',
     'Raza',
     TRUE
   )
-ON CONFLICT (school_id, email) DO NOTHING;
+ON CONFLICT (school_id, email) DO UPDATE
+SET
+  phone = EXCLUDED.phone,
+  password_hash = EXCLUDED.password_hash,
+  first_name = EXCLUDED.first_name,
+  last_name = EXCLUDED.last_name,
+  is_active = EXCLUDED.is_active,
+  updated_at = NOW();
 
 INSERT INTO user_roles (user_id, role_id)
 SELECT '20000000-0000-0000-0000-000000000001', id FROM roles WHERE code = 'school_admin'
@@ -121,7 +138,17 @@ VALUES
     '2024-08-01',
     'active'
   )
-ON CONFLICT (school_id, student_code) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET
+  school_id = EXCLUDED.school_id,
+  student_code = EXCLUDED.student_code,
+  first_name = EXCLUDED.first_name,
+  last_name = EXCLUDED.last_name,
+  date_of_birth = EXCLUDED.date_of_birth,
+  gender = EXCLUDED.gender,
+  admission_date = EXCLUDED.admission_date,
+  status = EXCLUDED.status,
+  updated_at = NOW();
 
 INSERT INTO student_user_accounts (student_id, user_id)
 VALUES ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000004')

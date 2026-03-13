@@ -1,14 +1,13 @@
 const { recordError } = require("../utils/observability");
+const logger = require("../utils/logger");
 
 function errorHandler(err, req, res, _next) {
   const status = err.status || 500;
   const code = err.code || "INTERNAL_SERVER_ERROR";
   recordError({ code });
 
-  // eslint-disable-next-line no-console
-  console.error(
-    JSON.stringify({
-      level: "error",
+  logger.error(
+    {
       type: "error",
       request_id: res.locals.requestId || null,
       method: req.method,
@@ -16,8 +15,8 @@ function errorHandler(err, req, res, _next) {
       status_code: status,
       code,
       message: err.message || "Unexpected error",
-      at: new Date().toISOString(),
-    })
+    },
+    "request error"
   );
 
   res.status(status).json({
