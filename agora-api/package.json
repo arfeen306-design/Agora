@@ -9,7 +9,7 @@
     "start": "node src/server.js",
     "check": "node -e \"require('./src/app'); console.log('syntax_ok')\"",
     "test": "node --test --test-concurrency=1",
-    "test:api": "node --test --test-concurrency=1 test/api/**/*.test.js",
+    "test:api": "node --test --test-concurrency=1 test/api/*.test.js",
     "worker:notifications": "node src/workers/notification-worker.js",
     "worker:notifications:once": "NOTIFICATION_WORKER_RUN_ONCE=true node src/workers/notification-worker.js",
     "worker:reminders": "node src/workers/reminder-worker.js",

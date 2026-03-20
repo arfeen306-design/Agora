@@ -88,7 +88,7 @@ export default function ApplicantDetailPage() {
   const { user } = useAuth();
   const params = useParams<{ studentId: string }>();
   const studentId = params?.studentId;
-  const roles = user?.roles || [];
+  const roles = useMemo(() => user?.roles ?? [], [user?.roles]);
   const canView = hasRole(roles, ADMISSIONS_VIEW_ROLES);
   const canManage = hasRole(roles, ADMISSIONS_MANAGE_ROLES);
   const canAdmit = hasRole(roles, ADMISSIONS_ADMIT_ROLES);

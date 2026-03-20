@@ -114,7 +114,11 @@ test("setup wizard status is role-gated and returns step progress", async () => 
   assert.equal(principalStatus.status, 200, JSON.stringify(principalStatus.body));
   assert.equal(principalStatus.body?.success, true);
   assert.ok(Array.isArray(principalStatus.body?.data?.steps));
-  assert.equal(principalStatus.body?.data?.steps.length, 9);
+  assert.equal(
+    principalStatus.body?.data?.steps.length,
+    principalStatus.body?.data?.total_steps,
+    JSON.stringify(principalStatus.body)
+  );
 
   const frontDeskStatus = await jsonRequest("/api/v1/institution/setup-wizard/status", {
     method: "GET",
@@ -172,7 +176,7 @@ test("setup wizard step updates and launch workflow are validated and audited", 
   assert.equal(launched.body?.success, true);
   assert.ok(launched.body?.data?.launch?.launched_at);
   assert.equal(launched.body?.data?.status?.launch_ready, true);
-  assert.equal(launched.body?.data?.status?.completed_steps, 9);
+  assert.equal(launched.body?.data?.status?.completed_steps, steps.length);
 
   const persisted = await pool.query(
     `

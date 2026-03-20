@@ -25,7 +25,7 @@ function hasAnyRole(roles: string[] = [], allowed: string[]) {
 
 export default function ClassTeacherTimetablePage() {
   const { user } = useAuth();
-  const roles = user?.roles || [];
+  const roles = useMemo(() => user?.roles ?? [], [user?.roles]);
   const allowed = hasAnyRole(roles, CLASS_TEACHER_ROLES);
   const canSelectClassroom = hasAnyRole(roles, LEADERSHIP_VIEWER_ROLES);
 
