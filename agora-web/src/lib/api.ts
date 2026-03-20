@@ -521,6 +521,7 @@ export async function getAdmissionsPipeline(params: {
   date_from?: string;
   date_to?: string;
   academic_year_id?: string;
+  section_id?: string;
 } = {}) {
   const query = new URLSearchParams();
   if (params.search) query.set("search", params.search);
@@ -528,6 +529,7 @@ export async function getAdmissionsPipeline(params: {
   if (params.date_from) query.set("date_from", params.date_from);
   if (params.date_to) query.set("date_to", params.date_to);
   if (params.academic_year_id) query.set("academic_year_id", params.academic_year_id);
+  if (params.section_id) query.set("section_id", params.section_id);
   return request<AdmissionPipelineData>(`/admissions/pipeline${query.toString() ? `?${query}` : ""}`);
 }
 
@@ -872,12 +874,82 @@ export interface PrincipalFinanceAndAlerts {
   active_delegations: number;
 }
 
+export interface DashboardAttendanceBreakdown {
+  total: number;
+  present_count: number;
+  late_count: number;
+  absent_count: number;
+  leave_count: number;
+}
+
+export interface PrincipalSectionStaffPreview {
+  staff_profile_id: string;
+  user_id: string;
+  staff_code: string;
+  staff_type: string;
+  designation?: string | null;
+  department?: string | null;
+  name: string;
+  email: string;
+  attendance_status: string;
+}
+
+export interface PrincipalSectionCommandBlock {
+  section_id: string;
+  section_name: string;
+  section_code: string;
+  section_type: string;
+  head_user_id?: string | null;
+  head_name?: string | null;
+  coordinator_user_id?: string | null;
+  coordinator_name?: string | null;
+  class_count: number;
+  active_students: number;
+  assigned_staff: number;
+  linked_parents: number;
+  student_attendance_today: DashboardAttendanceBreakdown;
+  staff_attendance_today: DashboardAttendanceBreakdown;
+  discipline: {
+    open_count: number;
+    escalated_count: number;
+    critical_count: number;
+  };
+  events: {
+    upcoming_count: number;
+  };
+  admissions: {
+    inquiry_count: number;
+    under_review_count: number;
+    accepted_count: number;
+    waitlisted_count: number;
+    admitted_count: number;
+    rejected_count: number;
+  };
+  withdrawals: {
+    count: number;
+  };
+  results: {
+    total_cards: number;
+    published_cards: number;
+    draft_cards: number;
+    average_percentage: number;
+    latest_term_name?: string | null;
+  };
+  timetable: {
+    entries_count: number;
+    classrooms_with_timetable: number;
+    substitutions_this_week: number;
+  };
+  staff_preview: PrincipalSectionStaffPreview[];
+}
+
 export interface PrincipalDashboardData {
   attendance_today: PrincipalAttendanceToday;
   section_attendance: PrincipalSectionAttendanceRow[];
   homework_completion_by_section: PrincipalHomeworkCompletionRow[];
   marks_upload_status: PrincipalMarksUploadStatus;
   finance_and_alerts: PrincipalFinanceAndAlerts;
+  section_command_blocks: PrincipalSectionCommandBlock[];
   generated_at: string;
 }
 
@@ -886,9 +958,14 @@ export interface SectionDashboardRow {
   section_name: string;
   section_code: string;
   section_type: string;
+  head_user_id?: string | null;
+  head_name?: string | null;
+  coordinator_user_id?: string | null;
+  coordinator_name?: string | null;
   class_count: number;
   active_students: number;
   assigned_staff: number;
+  linked_parents?: number;
   attendance_records_today: number;
   late_today: number;
   absent_today: number;
@@ -898,6 +975,9 @@ export interface SectionDashboardClassAttendanceRow {
   classroom_id: string;
   classroom_label: string;
   classroom_code?: string | null;
+  room_number?: string | null;
+  homeroom_teacher_name?: string | null;
+  active_students?: number;
   attendance_records_today: number;
   present_count: number;
   late_count: number;
@@ -939,13 +1019,112 @@ export interface SectionDashboardEventItem {
   classroom_label?: string | null;
 }
 
+export interface SectionDashboardLeadership {
+  head_user_id?: string | null;
+  head_name?: string | null;
+  coordinator_user_id?: string | null;
+  coordinator_name?: string | null;
+}
+
+export interface SectionDashboardStaffProfile {
+  staff_profile_id: string;
+  user_id: string;
+  staff_code: string;
+  staff_type: string;
+  designation?: string | null;
+  department?: string | null;
+  employment_status: string;
+  first_name: string;
+  last_name?: string | null;
+  email: string;
+  attendance_status: string;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+}
+
+export interface SectionDashboardParentAccessSummary {
+  active_students: number;
+  linked_parents: number;
+}
+
+export interface SectionDashboardTermProgress {
+  exam_term_id: string;
+  term_name: string;
+  term_type: string;
+  starts_on?: string | null;
+  ends_on?: string | null;
+  total_report_cards: number;
+  published_report_cards: number;
+  draft_report_cards: number;
+  average_percentage: number;
+}
+
+export interface SectionDashboardAdmissionSummary {
+  inquiry_count: number;
+  applied_count: number;
+  under_review_count: number;
+  accepted_count: number;
+  waitlisted_count: number;
+  admitted_count: number;
+  rejected_count: number;
+}
+
+export interface SectionDashboardAdmissionRecord {
+  id: string;
+  student_id: string;
+  student_code: string;
+  student_name: string;
+  guardian_name?: string | null;
+  guardian_phone?: string | null;
+  current_status: string;
+  created_at: string;
+  desired_grade_label?: string | null;
+  desired_section_label?: string | null;
+}
+
+export interface SectionDashboardTimetableSummary {
+  entries_count: number;
+  classrooms_with_timetable: number;
+  substitutions_this_week: number;
+}
+
+export interface SectionDashboardTimetablePreview {
+  timetable_entry_id: string;
+  classroom_id: string;
+  classroom_label: string;
+  subject_name?: string | null;
+  teacher_name?: string | null;
+  day_of_week: number;
+  period_label: string;
+  period_number: number;
+  room_number?: string | null;
+}
+
+export interface SectionDashboardMovementSummary {
+  inactive_enrollments: number;
+  transferred_students: number;
+  promoted_students: number;
+  withdrawn_students: number;
+}
+
 export interface SectionDashboardDetail {
   section: SectionDashboardRow | null;
+  leadership?: SectionDashboardLeadership;
+  parent_access_summary?: SectionDashboardParentAccessSummary;
+  student_attendance_today?: DashboardAttendanceBreakdown;
+  staff_attendance_today?: DashboardAttendanceBreakdown;
   class_attendance: SectionDashboardClassAttendanceRow[];
   teacher_completion: SectionDashboardTeacherCompletion;
+  staff_profiles?: SectionDashboardStaffProfile[];
   late_absent_students: SectionDashboardLateAbsentStudent[];
   upcoming_events: SectionDashboardEventItem[];
   announcements: SectionDashboardEventItem[];
+  result_progress_by_term?: SectionDashboardTermProgress[];
+  admissions_summary?: SectionDashboardAdmissionSummary;
+  admission_records?: SectionDashboardAdmissionRecord[];
+  timetable_summary?: SectionDashboardTimetableSummary;
+  timetable_preview?: SectionDashboardTimetablePreview[];
+  movement_summary?: SectionDashboardMovementSummary;
 }
 
 export interface SectionDashboardData {
@@ -1716,6 +1895,203 @@ export interface TeacherTimetablePayload {
   entries: TimetableEntryRow[];
 }
 
+export interface ClassroomWeeklyTimetableRow {
+  id: string;
+  position: number;
+  label: string;
+  day_of_week?: number | null;
+  day_name?: string | null;
+  is_active?: boolean;
+}
+
+export interface ClassroomWeeklyTimetableColumn {
+  id: string;
+  position: number;
+  label: string;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  period_id?: string | null;
+  is_active?: boolean;
+}
+
+export interface ClassroomWeeklyTimetableCell {
+  id: string;
+  row_id: string;
+  column_id: string;
+  subject_id?: string | null;
+  teacher_id?: string | null;
+  title?: string | null;
+  subtitle?: string | null;
+  room_number?: string | null;
+  notes?: string | null;
+  color_hex?: string | null;
+  subject_name?: string | null;
+  subject_code?: string | null;
+  teacher_name?: string | null;
+}
+
+export interface ClassroomWeeklyTimetableSubjectOption {
+  id: string;
+  label: string;
+  subject_name: string;
+  subject_code?: string | null;
+  teacher_id?: string | null;
+  teacher_name?: string | null;
+}
+
+export interface ClassroomWeeklyTimetableTeacherOption {
+  id: string;
+  label: string;
+}
+
+export interface ClassroomWeeklyTimetableBoardPayload {
+  board_id: string;
+  classroom: {
+    id: string;
+    academic_year_id: string;
+    academic_year_name?: string | null;
+    grade_label: string;
+    section_label: string;
+    classroom_code?: string | null;
+    label: string;
+  };
+  rows: ClassroomWeeklyTimetableRow[];
+  columns: ClassroomWeeklyTimetableColumn[];
+  cells: ClassroomWeeklyTimetableCell[];
+  available_subjects: ClassroomWeeklyTimetableSubjectOption[];
+  available_teachers: ClassroomWeeklyTimetableTeacherOption[];
+}
+
+export interface TimetableEngineGenerationResult {
+  academic_year_id: string;
+  academic_year_name: string;
+  project: {
+    id: number;
+    name: string;
+    academic_year: string;
+  };
+  synced: {
+    subjects: number;
+    teachers: number;
+    rooms: number;
+    classes: number;
+    lessons: number;
+  };
+  validation: {
+    warnings: string[];
+    readiness_summary: Record<string, unknown>;
+  };
+  generation: {
+    run_id: number | null;
+    entries_count: number;
+    message: string;
+  };
+  import: {
+    imported_count: number;
+  };
+  unscheduled_lessons: Array<Record<string, unknown>>;
+}
+
+export interface TimetableWizardSchoolSettings {
+  school_id: string;
+  school_name: string;
+  branch_name: string | null;
+  academic_year_id: string;
+  academic_year_name: string;
+  working_days_per_week: number;
+  periods_per_day: number;
+  break_periods: number;
+  school_start_time: string | null;
+  first_period_start_time: string | null;
+  weekly_holidays: string[];
+}
+
+export interface TimetableWizardSubjectRow {
+  id: string;
+  name: string;
+  code: string;
+  category: string;
+  color: string;
+  max_per_day: number;
+  double_allowed: boolean;
+  preferred_room_type: string;
+}
+
+export interface TimetableWizardClassRow {
+  id: string;
+  name: string;
+  grade_label: string;
+  section_label: string;
+  stream_label: string;
+  code: string;
+  color: string;
+  strength: number;
+}
+
+export interface TimetableWizardRoomRow {
+  id: string;
+  name: string;
+  code: string;
+  room_type: string;
+  capacity: number | null;
+  color: string;
+}
+
+export interface TimetableWizardTeacherRow {
+  id: string;
+  name: string;
+  code: string;
+  title: string;
+  color: string;
+  max_periods_day: number;
+  max_periods_week: number;
+}
+
+export interface TimetableWizardLessonRow {
+  id: string;
+  teacher_name: string;
+  teacher_code: string | null;
+  subject_name: string;
+  subject_code: string;
+  classroom_name: string;
+  classroom_code: string;
+  periods_per_week: number;
+  lesson_duration: number;
+  lesson_priority: number;
+  is_timetable_locked: boolean;
+}
+
+export interface TimetableWizardConstraintSummary {
+  slot_count: number;
+  active_entry_count: number;
+  active_substitution_count: number;
+  locked_lessons: number;
+  missing_teacher_assignments: number;
+  missing_period_loads: number;
+  warning_messages: string[];
+}
+
+export interface TimetableWizardSnapshot {
+  school: TimetableWizardSchoolSettings;
+  subjects: TimetableWizardSubjectRow[];
+  classes: TimetableWizardClassRow[];
+  classrooms: TimetableWizardRoomRow[];
+  teachers: TimetableWizardTeacherRow[];
+  lessons: TimetableWizardLessonRow[];
+  constraints: TimetableWizardConstraintSummary;
+  demo_project: {
+    available: boolean;
+    source: string;
+    summary: {
+      subjects: number;
+      classes: number;
+      classrooms: number;
+      teachers: number;
+      lessons: number;
+    };
+  };
+}
+
 export async function getTimetablePeriods(params: Record<string, string> = {}) {
   const query = new URLSearchParams(params).toString();
   return request(`/timetable/periods${query ? `?${query}` : ""}`);
@@ -1751,6 +2127,23 @@ export async function generateTimetableSlots(data: { academic_year_id: string; w
       body: JSON.stringify(data),
     }
   );
+}
+
+export async function generateTimetableViaEngine(data: { academic_year_id?: string }) {
+  const res = await request<TimetableEngineGenerationResult>("/timetable/integration/generate", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function getTimetableWizardSnapshot(params: { academic_year_id?: string } = {}) {
+  const query = new URLSearchParams();
+  if (params.academic_year_id) query.set("academic_year_id", params.academic_year_id);
+  const res = await request<TimetableWizardSnapshot>(
+    `/timetable/wizard-snapshot${query.toString() ? `?${query.toString()}` : ""}`
+  );
+  return res.data;
 }
 
 export async function getTimetableSlots(params: Record<string, string> = {}) {
@@ -1799,6 +2192,13 @@ export async function getTeacherTimetable(teacherId: string, params: Record<stri
   const query = new URLSearchParams(params).toString();
   const res = await request<TeacherTimetablePayload>(
     `/timetable/teachers/${teacherId}${query ? `?${query}` : ""}`
+  );
+  return res.data;
+}
+
+export async function getClassroomManualTimetableBoard(classroomId: string) {
+  const res = await request<ClassroomWeeklyTimetableBoardPayload>(
+    `/timetable/classrooms/${classroomId}/manual-board`
   );
   return res.data;
 }
@@ -3111,6 +3511,60 @@ function normalizePagination(meta?: ApiResponse["meta"]): PaginationPayload {
 
 export async function getClassTeacherMyClassroom() {
   const res = await request<ClassTeacherMyClassroomPayload>("/class-teacher/my-classroom");
+  return res.data;
+}
+
+export async function getClassTeacherTimetableBoard(params: { classroom_id?: string | null } = {}) {
+  const query = new URLSearchParams();
+  if (params.classroom_id) query.set("classroom_id", params.classroom_id);
+  const res = await request<ClassroomWeeklyTimetableBoardPayload>(
+    `/class-teacher/timetable${query.toString() ? `?${query.toString()}` : ""}`
+  );
+  return res.data;
+}
+
+export async function createClassTeacherTimetableRow(data: {
+  classroom_id?: string | null;
+  label: string;
+  day_of_week?: number | null;
+}) {
+  const res = await request<ClassroomWeeklyTimetableBoardPayload>("/class-teacher/timetable/rows", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function createClassTeacherTimetableColumn(data: {
+  classroom_id?: string | null;
+  label: string;
+  starts_at?: string | null;
+  ends_at?: string | null;
+}) {
+  const res = await request<ClassroomWeeklyTimetableBoardPayload>("/class-teacher/timetable/columns", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function updateClassTeacherTimetableCell(
+  cellId: string,
+  data: {
+    classroom_id?: string | null;
+    subject_id?: string | null;
+    teacher_id?: string | null;
+    title?: string | null;
+    subtitle?: string | null;
+    room_number?: string | null;
+    notes?: string | null;
+    color_hex?: string | null;
+  }
+) {
+  const res = await request<ClassroomWeeklyTimetableBoardPayload>(`/class-teacher/timetable/cells/${cellId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
   return res.data;
 }
 

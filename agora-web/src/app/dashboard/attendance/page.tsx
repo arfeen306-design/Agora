@@ -198,7 +198,7 @@ export default function AttendancePage() {
   return (
     <>
       <Header title="Attendance" />
-      <div className="p-6">
+      <div className={`p-6 ${isFamilyViewer ? "family-workspace" : ""}`}>
         {message && (
           <div className={`mb-4 rounded-lg p-3 text-sm ${message.includes("success") ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
             {message}
@@ -211,7 +211,7 @@ export default function AttendancePage() {
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-white/80">Attendance Status</p>
                 <h2 className="mt-2 text-3xl font-bold">Child Attendance View</h2>
-                <p className="mt-2 text-sm text-white/85">
+                <p className="mt-2 text-sm text-white/[0.85]">
                   This page is read-only for families. Attendance is updated by the class teacher and school staff.
                 </p>
               </div>

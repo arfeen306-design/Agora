@@ -1,59 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import Header from "@/components/Header";
-import AttendanceTrendArea from "@/components/dashboard/principal/AttendanceTrendArea";
-import FinanceSummaryPanel from "@/components/dashboard/principal/FinanceSummaryPanel";
-import PendingItemsPanel from "@/components/dashboard/principal/PendingItemsPanel";
-import PrincipalHeroCard from "@/components/dashboard/principal/PrincipalHeroCard";
-import PrincipalKpiStrip from "@/components/dashboard/principal/PrincipalKpiStrip";
-import PriorityAlertsPanel from "@/components/dashboard/principal/PriorityAlertsPanel";
-import QuickActionsPanel from "@/components/dashboard/principal/QuickActionsPanel";
-import SectionHealthTable from "@/components/dashboard/principal/SectionHealthTable";
-import UpcomingEventsPanel from "@/components/dashboard/principal/UpcomingEventsPanel";
-import type {
-  FinanceSummaryCardData,
-  PendingItem,
-  PrincipalAlert,
-  PrincipalEventItem,
-  PrincipalKpiCard,
-  SectionHealthRow,
-} from "@/components/dashboard/principal/types";
+import { MiniDonutChart, MiniHistogram, ProgressStripe } from "@/components/dashboard/shared/InsightCharts";
+import ClassroomWeeklyTimetableBoard from "@/components/timetable/ClassroomWeeklyTimetableBoard";
 import { useAuth } from "@/lib/auth";
 import {
+  getClassroomManualTimetableBoard,
   getDisciplineIncidents,
-  getEvents,
   getFeesSummary,
+  getLookupClassrooms,
   getNotifications,
   getPrincipalDashboard,
-  type DisciplineIncidentRecord,
+  type ClassroomWeeklyTimetableBoardPayload,
+  type LookupClassroom,
   type PrincipalDashboardData,
 } from "@/lib/api";
-
-interface FeesSummaryResponse {
-  total_invoices: number;
-  paid_count: number;
-  overdue_count: number;
-  amount_due_total: number;
-  amount_paid_total: number;
-  outstanding_total: number;
-  overdue_total: number;
-}
-
-interface NotificationRow {
-  id: string;
-  title: string;
-  status: string;
-}
-
-interface EventRow {
-  id: string;
-  title: string;
-  event_type: string;
-  starts_at: string;
-  target_scope: string;
-}
 
 const LEADERSHIP_ROLES = ["school_admin", "principal", "vice_principal"];
 
@@ -65,9 +29,26 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value || 0);
 }
 
-function toPercent(value: number, total: number) {
+function money(value: number) {
+  return new Intl.NumberFormat("en-PK", {
+    style: "currency",
+    currency: "PKR",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
+function percent(part: number, total: number) {
   if (!total) return 0;
-  return (value / total) * 100;
+  return Math.round((part / total) * 100);
+}
+
+function shortDate(value?: string | null) {
+  if (!value) return "No term yet";
+  return new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function labelize(value?: string | null) {
+  return value ? value.replaceAll("_", " ") : "Unassigned";
 }
 
 export default function PrincipalDashboardPage() {
@@ -75,10 +56,13 @@ export default function PrincipalDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dashboard, setDashboard] = useState<PrincipalDashboardData | null>(null);
-  const [financeSummary, setFinanceSummary] = useState<FinanceSummaryCardData | null>(null);
-  const [upcomingEvents, setUpcomingEvents] = useState<PrincipalEventItem[]>([]);
-  const [notificationRows, setNotificationRows] = useState<NotificationRow[]>([]);
-  const [disciplineRows, setDisciplineRows] = useState<DisciplineIncidentRecord[]>([]);
+  const [financeSummary, setFinanceSummary] = useState<any>(null);
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [escalatedIncidents, setEscalatedIncidents] = useState(0);
+  const [classroomOptions, setClassroomOptions] = useState<LookupClassroom[]>([]);
+  const [selectedClassroomId, setSelectedClassroomId] = useState("");
+  const [timetableBoard, setTimetableBoard] = useState<ClassroomWeeklyTimetableBoardPayload | null>(null);
+  const [timetableLoading, setTimetableLoading] = useState(false);
 
   const allowed = hasLeadershipAccess(user?.roles || []);
 
@@ -93,294 +77,135 @@ export default function PrincipalDashboardPage() {
     async function loadDashboard() {
       setLoading(true);
       setError("");
-
       const today = new Date();
       const dateFrom = new Date(today);
       dateFrom.setDate(today.getDate() - 30);
 
-      const [principalRes, feesRes, eventsRes, notificationsRes, disciplineRes] = await Promise.allSettled([
+      const [principalRes, feesRes, notificationsRes, disciplineRes, classroomRes] = await Promise.allSettled([
         getPrincipalDashboard(),
         getFeesSummary({
           date_from: dateFrom.toISOString().slice(0, 10),
           date_to: today.toISOString().slice(0, 10),
         }),
-        getEvents({
-          date_from: today.toISOString(),
-          page_size: "8",
-          page: "1",
-        }),
-        getNotifications({
-          page_size: "8",
-          page: "1",
-        }),
-        getDisciplineIncidents({
-          status: "escalated",
-          page: "1",
-          page_size: "40",
-        }),
+        getNotifications({ page: "1", page_size: "20" }),
+        getDisciplineIncidents({ status: "escalated", page: "1", page_size: "50" }),
+        getLookupClassrooms({ page_size: 100 }),
       ]);
 
       if (cancelled) return;
 
       if (principalRes.status === "fulfilled") {
-        setDashboard(principalRes.value.data as PrincipalDashboardData);
+        setDashboard(principalRes.value.data);
       } else {
         setDashboard(null);
         setError("Unable to load leadership summary right now.");
       }
 
-      if (feesRes.status === "fulfilled") {
-        const data = feesRes.value.data as FeesSummaryResponse;
-        setFinanceSummary({
-          totalInvoices: data.total_invoices || 0,
-          paidCount: data.paid_count || 0,
-          overdueCount: data.overdue_count || 0,
-          amountDueTotal: Number(data.amount_due_total || 0),
-          amountPaidTotal: Number(data.amount_paid_total || 0),
-          outstandingTotal: Number(data.outstanding_total || 0),
-          overdueTotal: Number(data.overdue_total || 0),
-        });
-      } else {
-        setFinanceSummary(null);
-      }
-
-      if (eventsRes.status === "fulfilled") {
-        const rows = (eventsRes.value.data as EventRow[]) || [];
-        setUpcomingEvents(
-          rows.slice(0, 6).map((row) => ({
-            id: row.id,
-            title: row.title,
-            eventType: row.event_type,
-            startsAt: row.starts_at,
-            targetScope: row.target_scope,
-          }))
-        );
-      } else {
-        setUpcomingEvents([]);
-      }
-
-      if (notificationsRes.status === "fulfilled") {
-        setNotificationRows(((notificationsRes.value.data as NotificationRow[]) || []).slice(0, 8));
-      } else {
-        setNotificationRows([]);
-      }
-
-      if (disciplineRes.status === "fulfilled") {
-        setDisciplineRows(((disciplineRes.value.data as DisciplineIncidentRecord[]) || []).slice(0, 40));
-      } else {
-        setDisciplineRows([]);
-      }
-
+      setFinanceSummary(feesRes.status === "fulfilled" ? feesRes.value.data : null);
+      setNotificationCount(
+        notificationsRes.status === "fulfilled"
+          ? (((notificationsRes.value.data as Array<{ status?: string }>) || []).filter((row) => row.status !== "read").length)
+          : 0
+      );
+      setEscalatedIncidents(
+        disciplineRes.status === "fulfilled" ? (((disciplineRes.value.data as unknown[]) || []).length) : 0
+      );
+      const nextClassrooms = classroomRes.status === "fulfilled" ? classroomRes.value : [];
+      setClassroomOptions(nextClassrooms);
+      setSelectedClassroomId((current) => current || nextClassrooms[0]?.id || "");
       setLoading(false);
     }
 
     loadDashboard();
-
     return () => {
       cancelled = true;
     };
   }, [allowed, user]);
 
-  const sectionHealthRows = useMemo<SectionHealthRow[]>(() => {
-    if (!dashboard) return [];
+  useEffect(() => {
+    if (!allowed || !selectedClassroomId) return;
 
-    const homeworkBySection = new Map(
-      dashboard.homework_completion_by_section.map((row) => [
-        row.section_code || row.section_name,
-        row,
-      ])
-    );
+    let cancelled = false;
 
-    return dashboard.section_attendance.map((row) => {
-      const hw = homeworkBySection.get(row.section_code || row.section_name);
-      const attendanceRate = toPercent(row.present_count, row.attendance_records_today);
-      const homeworkCompletionRate = hw
-        ? toPercent(hw.completed_submissions, hw.total_submissions)
-        : null;
-
-      return {
-        sectionId: row.section_id,
-        sectionName: row.section_name,
-        sectionCode: row.section_code,
-        totalRecords: row.attendance_records_today,
-        attendanceRate,
-        lateCount: row.late_count,
-        absentCount: row.absent_count,
-        homeworkCompletionRate,
-        missingHomework: hw?.missing_submissions || 0,
-      };
-    });
-  }, [dashboard]);
-
-  const kpiCards = useMemo<PrincipalKpiCard[]>(() => {
-    if (!dashboard) return [];
-
-    const totalHomework = dashboard.homework_completion_by_section.reduce(
-      (sum, row) => sum + (row.total_submissions || 0),
-      0
-    );
-    const completedHomework = dashboard.homework_completion_by_section.reduce(
-      (sum, row) => sum + (row.completed_submissions || 0),
-      0
-    );
-    const completionRate = toPercent(completedHomework, totalHomework);
-
-    return [
-      {
-        label: "Late Students Today",
-        value: formatNumber(dashboard.attendance_today.late_count),
-        subtext: "Require punctuality follow-up",
-        tone: dashboard.attendance_today.late_count > 15 ? "warning" : "primary",
-      },
-      {
-        label: "Absent Students Today",
-        value: formatNumber(dashboard.attendance_today.absent_count),
-        subtext: "Potential attendance risk",
-        tone: dashboard.attendance_today.absent_count > 10 ? "danger" : "warning",
-      },
-      {
-        label: "Homework Completion",
-        value: `${completionRate.toFixed(1)}%`,
-        subtext: `${formatNumber(completedHomework)} of ${formatNumber(totalHomework)} submissions`,
-        tone: completionRate >= 80 ? "success" : "warning",
-      },
-      {
-        label: "Marks Upload Volume",
-        value: formatNumber(dashboard.marks_upload_status.score_count),
-        subtext: `${formatNumber(dashboard.marks_upload_status.assessment_count)} assessments`,
-        tone: dashboard.marks_upload_status.score_count > 0 ? "primary" : "danger",
-      },
-      {
-        label: "Escalated Incidents",
-        value: formatNumber(disciplineRows.length),
-        subtext: "Needs principal review",
-        tone: disciplineRows.length > 0 ? "danger" : "success",
-      },
-    ];
-  }, [dashboard, disciplineRows.length]);
-
-  const alerts = useMemo<PrincipalAlert[]>(() => {
-    if (!dashboard) return [];
-
-    const rows: PrincipalAlert[] = [];
-    const absentCount = dashboard.attendance_today.absent_count || 0;
-    const lateCount = dashboard.attendance_today.late_count || 0;
-    const defaulters = dashboard.finance_and_alerts.defaulter_invoices || 0;
-    const atRiskSections = sectionHealthRows.filter(
-      (row) => row.attendanceRate < 75 || row.missingHomework > 10
-    ).length;
-    const unreadNotifications = notificationRows.filter((row) => row.status !== "read").length;
-    const escalatedCount = disciplineRows.length;
-
-    if (absentCount > 20) {
-      rows.push({
-        id: "alert_absent_critical",
-        title: "High Student Absence",
-        message: `${absentCount} students are absent today. Immediate section review is recommended.`,
-        severity: "danger",
-        href: "/dashboard/attendance",
-        actionLabel: "Inspect attendance",
-      });
+    async function loadBoard() {
+      setTimetableLoading(true);
+      try {
+        const nextBoard = await getClassroomManualTimetableBoard(selectedClassroomId);
+        if (!cancelled) setTimetableBoard(nextBoard);
+      } catch (err) {
+        if (!cancelled) {
+          setTimetableBoard(null);
+          setError(err instanceof Error ? err.message : "Failed to load leadership timetable view.");
+        }
+      } finally {
+        if (!cancelled) setTimetableLoading(false);
+      }
     }
 
-    if (lateCount > 10) {
-      rows.push({
-        id: "alert_late",
-        title: "Late Arrival Spike",
-        message: `${lateCount} late entries recorded today. Check gate and section punctuality action plan.`,
-        severity: "warning",
-        href: "/dashboard/reports",
-        actionLabel: "View attendance report",
-      });
-    }
+    loadBoard();
+    return () => {
+      cancelled = true;
+    };
+  }, [allowed, selectedClassroomId]);
 
-    if (defaulters > 0) {
-      rows.push({
-        id: "alert_defaulters",
-        title: "Fee Defaulters Need Follow-up",
-        message: `${defaulters} overdue invoices are active.`,
-        severity: "warning",
-        href: "/dashboard/fees",
-        actionLabel: "Open fee module",
-      });
-    }
+  const sectionBlocks = useMemo(() => dashboard?.section_command_blocks || [], [dashboard]);
 
-    if (atRiskSections > 0) {
-      rows.push({
-        id: "alert_sections",
-        title: "Section Health Risk",
-        message: `${atRiskSections} section(s) show weak attendance or homework completion.`,
-        severity: "danger",
-        href: "/dashboard/institution",
-        actionLabel: "Review section health",
-      });
-    }
+  const totals = useMemo(() => {
+    const totalSections = sectionBlocks.length;
+    const studentPresent = sectionBlocks.reduce((sum, block) => sum + (block.student_attendance_today.present_count || 0), 0);
+    const studentTotal = sectionBlocks.reduce((sum, block) => sum + (block.student_attendance_today.total || 0), 0);
+    const staffPresent = sectionBlocks.reduce((sum, block) => sum + (block.staff_attendance_today.present_count || 0), 0);
+    const staffTotal = sectionBlocks.reduce((sum, block) => sum + (block.staff_attendance_today.total || 0), 0);
+    const parents = sectionBlocks.reduce((sum, block) => sum + (block.linked_parents || 0), 0);
+    const students = sectionBlocks.reduce((sum, block) => sum + (block.active_students || 0), 0);
+    const publishedCards = sectionBlocks.reduce((sum, block) => sum + (block.results.published_cards || 0), 0);
+    const totalCards = sectionBlocks.reduce((sum, block) => sum + (block.results.total_cards || 0), 0);
+    const admissions = sectionBlocks.reduce((sum, block) => sum + (block.admissions.inquiry_count || 0) + (block.admissions.under_review_count || 0) + (block.admissions.accepted_count || 0) + (block.admissions.waitlisted_count || 0), 0);
 
-    if (escalatedCount > 0) {
-      rows.push({
-        id: "alert_discipline_escalated",
-        title: "Escalated Discipline Incidents",
-        message: `${escalatedCount} escalated incident(s) are waiting for leadership action.`,
-        severity: "danger",
-        href: "/dashboard/discipline",
-        actionLabel: "Open discipline",
-      });
-    }
+    return {
+      totalSections,
+      studentPresent,
+      studentTotal,
+      staffPresent,
+      staffTotal,
+      parents,
+      students,
+      publishedCards,
+      totalCards,
+      admissions,
+    };
+  }, [sectionBlocks]);
 
-    if (unreadNotifications > 0) {
-      rows.push({
-        id: "alert_notifications",
-        title: "Pending Leadership Notifications",
-        message: `${unreadNotifications} notifications are awaiting review.`,
-        severity: "info",
-        href: "/dashboard/notifications",
-        actionLabel: "Open notifications",
-      });
-    }
+  const resultHistogram = useMemo(
+    () =>
+      sectionBlocks.map((block) => ({
+        label: block.section_code || block.section_name,
+        value: block.results.average_percentage || 0,
+      })),
+    [sectionBlocks]
+  );
 
-    return rows.slice(0, 5);
-  }, [dashboard, disciplineRows.length, notificationRows, sectionHealthRows]);
-
-  const pendingItems = useMemo<PendingItem[]>(() => {
-    if (!dashboard) return [];
-
-    const atRiskSections = sectionHealthRows.filter(
-      (row) => row.attendanceRate < 75 || row.missingHomework > 10
-    ).length;
-
-    return [
-      {
-        id: "pending_defaulters",
-        label: "Defaulter Invoices",
-        value: formatNumber(dashboard.finance_and_alerts.defaulter_invoices || 0),
-        tone: (dashboard.finance_and_alerts.defaulter_invoices || 0) > 0 ? "warning" : "primary",
-        href: "/dashboard/fees",
-      },
-      {
-        id: "pending_delegations",
-        label: "Active Delegations",
-        value: formatNumber(dashboard.finance_and_alerts.active_delegations || 0),
-        tone: "primary",
-        href: "/dashboard/access-control",
-      },
-      {
-        id: "pending_section_flags",
-        label: "Section Flags",
-        value: formatNumber(atRiskSections),
-        tone: atRiskSections > 0 ? "danger" : "primary",
-        href: "/dashboard/institution",
-      },
-    ];
-  }, [dashboard, sectionHealthRows]);
+  const admissionsBars = useMemo(
+    () =>
+      sectionBlocks.map((block) => ({
+        label: block.section_code,
+        value:
+          (block.admissions.inquiry_count || 0) +
+          (block.admissions.under_review_count || 0) +
+          (block.admissions.accepted_count || 0) +
+          (block.admissions.waitlisted_count || 0),
+      })),
+    [sectionBlocks]
+  );
 
   if (!allowed) {
     return (
       <>
         <Header title="Principal Dashboard" />
         <div className="p-6">
-          <section className="card">
-            <h2 className="text-xl font-semibold text-gray-900">Leadership Access Required</h2>
-            <p className="mt-2 text-sm text-gray-600">
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-900">Leadership Access Required</h2>
+            <p className="mt-2 text-sm text-slate-600">
               This command center is available to School Admin, Principal, and Vice Principal roles.
             </p>
           </section>
@@ -393,13 +218,12 @@ export default function PrincipalDashboardPage() {
     return (
       <>
         <Header title="Principal Dashboard" />
-        <div className="p-6">
-          <div className="mb-5 h-52 animate-pulse rounded-2xl bg-blue-100" />
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="h-28 animate-pulse rounded-xl bg-gray-200" />
-            <div className="h-28 animate-pulse rounded-xl bg-gray-200" />
-            <div className="h-28 animate-pulse rounded-xl bg-gray-200" />
-            <div className="h-28 animate-pulse rounded-xl bg-gray-200" />
+        <div className="space-y-6 p-6">
+          <div className="h-56 animate-pulse rounded-[32px] bg-gradient-to-r from-[#4b1235] to-[#7c3aed]" />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="h-28 animate-pulse rounded-3xl bg-white/80" />
+            ))}
           </div>
         </div>
       </>
@@ -411,57 +235,290 @@ export default function PrincipalDashboardPage() {
       <>
         <Header title="Principal Dashboard" />
         <div className="p-6">
-          <section className="card">
-            <h2 className="text-xl font-semibold text-gray-900">Unable to load command center</h2>
-            <p className="mt-2 text-sm text-gray-600">{error || "Please refresh and try again."}</p>
+          <section className="rounded-3xl border border-rose-200 bg-rose-50 p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-rose-900">Unable to load command center</h2>
+            <p className="mt-2 text-sm text-rose-700">{error || "Please refresh and try again."}</p>
           </section>
         </div>
       </>
     );
   }
 
-  const attendanceRate = toPercent(dashboard.attendance_today.present_count, dashboard.attendance_today.total);
-
   return (
     <>
       <Header title="Principal Dashboard" />
       <div className="space-y-6 p-6">
-        {error && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {error}
+        {error ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>
+        ) : null}
+
+        <section className="overflow-hidden rounded-[32px] bg-gradient-to-r from-[#4b1235] via-[#5b1c87] to-[#2563eb] p-8 text-white shadow-2xl shadow-violet-950/20">
+          <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+            <div>
+              <p className="text-xs uppercase tracking-[0.35em] text-violet-100/80">Leadership Command Center</p>
+              <h1 className="mt-3 text-4xl font-bold tracking-tight">Every section, HM, attendance signal, and academic pulse in one screen.</h1>
+              <p className="mt-3 max-w-3xl text-sm text-violet-100/90">
+                Track section managers, student and staff attendance, discipline pressure, admissions movement, report-card publishing, and parent linkage without leaving this command view.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3 text-sm">
+                <Link href="/dashboard/institution" className="rounded-full bg-white/[0.15] px-4 py-2 font-semibold text-white transition hover:bg-white/20">
+                  Open institution setup
+                </Link>
+                <Link href="/dashboard/parents" className="rounded-full bg-white/10 px-4 py-2 font-semibold text-white/95 transition hover:bg-white/20">
+                  Parents and families
+                </Link>
+                <Link href="/dashboard/reports" className="rounded-full bg-white/10 px-4 py-2 font-semibold text-white/95 transition hover:bg-white/20">
+                  Results and reports
+                </Link>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-slate-950">
+              <HeroStat label="Sections live" value={formatNumber(totals.totalSections)} hint="HM-led operational units" />
+              <HeroStat label="Student attendance" value={`${percent(totals.studentPresent, totals.studentTotal)}%`} hint={`${formatNumber(totals.studentPresent)} present today`} />
+              <HeroStat label="Staff attendance" value={`${percent(totals.staffPresent, totals.staffTotal)}%`} hint={`${formatNumber(totals.staffPresent)} marked today`} />
+              <HeroStat label="Published cards" value={`${percent(totals.publishedCards, totals.totalCards)}%`} hint={`${formatNumber(totals.publishedCards)} of ${formatNumber(totals.totalCards)}`} />
+            </div>
           </div>
-        )}
+        </section>
 
-        <PrincipalHeroCard
-          title={`Welcome back, ${user?.first_name || "Leader"}`}
-          subtitle="Leadership overview of attendance, academic throughput, finance signals, and section-level health."
-          attendanceRate={attendanceRate}
-          presentCount={dashboard.attendance_today.present_count}
-          totalCount={dashboard.attendance_today.total}
-          generatedAt={dashboard.generated_at}
-        />
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <SummaryTile label="Linked parents" value={formatNumber(totals.parents)} helper="Family access covered by sections" tone="rose" />
+          <SummaryTile label="Open admissions" value={formatNumber(totals.admissions)} helper="Inquiry, review, accepted, waitlisted" tone="violet" />
+          <SummaryTile label="Unread alerts" value={formatNumber(notificationCount)} helper="Leadership notifications awaiting review" tone="amber" />
+          <SummaryTile label="Escalated discipline" value={formatNumber(escalatedIncidents)} helper="Needs leadership follow-up" tone="blue" />
+        </section>
 
-        <PrincipalKpiStrip items={kpiCards} />
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.95fr]">
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-semibold text-slate-900">Section command blocks</h2>
+                <p className="text-sm text-slate-500">One block per section with HM, attendance, results, admissions, discipline, and staff visibility.</p>
+              </div>
+              <Link href="/dashboard/section" className="text-sm font-semibold text-violet-700 hover:text-violet-900">Open HM dashboard</Link>
+            </div>
+            <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
+              {sectionBlocks.map((block) => {
+                const resultCompletion = block.results.total_cards > 0 ? block.results.published_cards : block.active_students;
+                const resultTarget = block.results.total_cards > 0 ? block.results.total_cards : block.active_students;
+                const admissionOpen =
+                  block.admissions.inquiry_count +
+                  block.admissions.under_review_count +
+                  block.admissions.accepted_count +
+                  block.admissions.waitlisted_count;
+                return (
+                  <article key={block.section_id} className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 bg-gradient-to-r from-[#521b3d] via-[#5b21b6] to-[#2563eb] p-5 text-white">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.3em] text-violet-100/80">{labelize(block.section_type)}</p>
+                          <h3 className="mt-2 text-2xl font-semibold">{block.section_name}</h3>
+                          <p className="mt-1 text-sm text-violet-100/[0.85]">{block.section_code} • {block.class_count} classes • {block.active_students} students</p>
+                        </div>
+                        <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm backdrop-blur">
+                          <p className="text-xs uppercase tracking-[0.2em] text-violet-100/80">HM / Manager</p>
+                          <p className="mt-1 font-semibold">{block.head_name || block.coordinator_name || "Unassigned"}</p>
+                          <p className="text-xs text-violet-100/80">{block.coordinator_name ? `Coordinator: ${block.coordinator_name}` : "Leadership seat available"}</p>
+                        </div>
+                      </div>
+                    </div>
 
-        <AttendanceTrendArea
-          attendance={dashboard.attendance_today}
-          sections={dashboard.section_attendance}
-        />
+                    <div className="grid gap-4 p-5 xl:grid-cols-[1.1fr_1fr]">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <MiniDonutChart title="Student attendance" breakdown={block.student_attendance_today} tone="blue" />
+                        <MiniDonutChart title="Staff attendance" breakdown={block.staff_attendance_today} tone="emerald" />
+                      </div>
+                      <div className="space-y-3 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <MetricPill label="Staff" value={formatNumber(block.assigned_staff)} tone="violet" />
+                          <MetricPill label="Parents linked" value={formatNumber(block.linked_parents)} tone="blue" />
+                          <MetricPill label="Discipline open" value={formatNumber(block.discipline.open_count)} tone="rose" />
+                          <MetricPill label="Events (14d)" value={formatNumber(block.events.upcoming_count)} tone="amber" />
+                        </div>
+                        <ProgressStripe
+                          label={`Results progress${block.results.latest_term_name ? ` • ${block.results.latest_term_name}` : ""}`}
+                          value={resultCompletion}
+                          total={resultTarget}
+                          hint={`Avg ${block.results.average_percentage.toFixed(1)}% • ${block.results.draft_cards} drafts pending`}
+                          colorClass="from-fuchsia-500 via-violet-600 to-blue-500"
+                        />
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                          <div className="flex items-center justify-between text-sm font-semibold text-slate-900">
+                            <span>Admissions & movement</span>
+                            <span>{formatNumber(admissionOpen)} open</span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600">
+                            <StatBadge label="Accepted" value={block.admissions.accepted_count} tone="emerald" />
+                            <StatBadge label="Admitted" value={block.admissions.admitted_count} tone="blue" />
+                            <StatBadge label="Withdrawals" value={block.withdrawals.count} tone="slate" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-        <SectionHealthTable rows={sectionHealthRows} />
-
-        <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="space-y-5 xl:col-span-2">
-            <PriorityAlertsPanel alerts={alerts} />
-            <QuickActionsPanel />
+                    <div className="grid gap-5 border-t border-slate-200 px-5 py-5 lg:grid-cols-[1.1fr_0.9fr]">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-semibold uppercase tracking-[0.25em] text-slate-500">Section staff profiles</h4>
+                          <Link href={`/dashboard/people?section_id=${block.section_id}`} className="text-xs font-semibold text-violet-700 hover:text-violet-900">Open people</Link>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {block.staff_preview.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                              No staff assigned yet.
+                            </div>
+                          ) : (
+                            block.staff_preview.map((staff) => (
+                              <div key={staff.staff_profile_id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <div>
+                                  <p className="font-semibold text-slate-900">{staff.name}</p>
+                                  <p className="text-xs text-slate-500">{staff.designation || labelize(staff.staff_type)} • {staff.department || "Section operations"}</p>
+                                </div>
+                                <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold capitalize text-white">{staff.attendance_status}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <MetricPanel title="Staff coverage" value={formatNumber(block.assigned_staff)} subtitle={`${formatNumber(block.class_count)} classes • ${formatNumber(block.staff_attendance_today.present_count || 0)} staff present today`} />
+                        <MetricPanel title="Students & parents" value={`${formatNumber(block.active_students)} / ${formatNumber(block.linked_parents)}`} subtitle="Students and linked guardians in this section" />
+                        <div className="flex flex-wrap gap-2">
+                          <Link href={`/dashboard/reports?section_id=${block.section_id}`} className="rounded-full bg-violet-100 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-200">Result progress</Link>
+                          <Link href={`/dashboard/admissions/pipeline?section_id=${block.section_id}`} className="rounded-full bg-blue-100 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-200">Admissions</Link>
+                          <Link href={`/dashboard/people?section_id=${block.section_id}`} className="rounded-full bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-200">Staff & people</Link>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           </div>
-          <div className="space-y-5">
-            <FinanceSummaryPanel data={financeSummary} />
-            <PendingItemsPanel items={pendingItems} />
-            <UpcomingEventsPanel events={upcomingEvents} />
+
+          <div className="space-y-6">
+            <MiniHistogram title="Section result progress" items={resultHistogram.length ? resultHistogram : [{ label: "No data", value: 0 }]} />
+            <MiniHistogram title="Admission pressure by section" items={admissionsBars.length ? admissionsBars : [{ label: "No data", value: 0 }]} />
+            <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Finance and alerts</p>
+              <div className="mt-4 space-y-3">
+                <MetricPanel title="Outstanding dues" value={money(financeSummary?.outstanding_total || 0)} subtitle={`${formatNumber(financeSummary?.overdue_count || 0)} overdue invoices • ${money(financeSummary?.overdue_total || 0)} overdue value`} />
+                <MetricPanel title="Paid this cycle" value={money(financeSummary?.amount_paid_total || 0)} subtitle={`${formatNumber(financeSummary?.paid_count || 0)} invoices cleared`} />
+                <MetricPanel title="Leadership queue" value={formatNumber(notificationCount + escalatedIncidents)} subtitle={`${formatNumber(notificationCount)} notifications • ${formatNumber(escalatedIncidents)} escalated incidents`} />
+              </div>
+            </section>
           </div>
+        </section>
+
+        <section className="space-y-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Timetable</p>
+              <h2 className="mt-2 text-2xl font-semibold text-slate-900">Leadership timetable view</h2>
+              <p className="mt-1 text-sm text-slate-500">Select any class to review the live weekly timetable being shared with teachers, HM, students, and families.</p>
+            </div>
+            <div className="min-w-[280px]">
+              <label className="label-text">Select class</label>
+              <select className="input-field mt-2" value={selectedClassroomId} onChange={(e) => setSelectedClassroomId(e.target.value)}>
+                {classroomOptions.map((classroom) => (
+                  <option key={classroom.id} value={classroom.id}>
+                    {classroom.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {timetableLoading ? (
+            <div className="h-96 animate-pulse rounded-2xl bg-slate-100" />
+          ) : timetableBoard ? (
+            <ClassroomWeeklyTimetableBoard
+              board={timetableBoard}
+              title="Class timetable"
+              subtitle="This principal view stays read-only and mirrors the timetable maintained in the class teacher workspace."
+            />
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              No timetable board is available for the selected classroom yet.
+            </div>
+          )}
         </section>
       </div>
     </>
+  );
+}
+
+function HeroStat({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="rounded-3xl bg-white px-5 py-4 shadow-lg shadow-slate-950/10">
+      <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-bold text-slate-950">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{hint}</p>
+    </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  helper,
+  tone,
+}: {
+  label: string;
+  value: string;
+  helper: string;
+  tone: "rose" | "violet" | "amber" | "blue";
+}) {
+  const tones = {
+    rose: "from-rose-500/10 to-fuchsia-500/10 border-rose-200 text-rose-900",
+    violet: "from-violet-500/10 to-indigo-500/10 border-violet-200 text-violet-900",
+    amber: "from-amber-500/10 to-orange-500/10 border-amber-200 text-amber-900",
+    blue: "from-blue-500/10 to-cyan-500/10 border-blue-200 text-blue-900",
+  };
+  return (
+    <div className={`rounded-3xl border bg-gradient-to-r p-5 shadow-sm ${tones[tone]}`}>
+      <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-1 text-sm text-slate-600">{helper}</p>
+    </div>
+  );
+}
+
+function MetricPill({ label, value, tone }: { label: string; value: string; tone: "violet" | "blue" | "rose" | "amber" }) {
+  const tones = {
+    violet: "bg-violet-100 text-violet-800",
+    blue: "bg-blue-100 text-blue-800",
+    rose: "bg-rose-100 text-rose-800",
+    amber: "bg-amber-100 text-amber-800",
+  };
+  return (
+    <div className="rounded-2xl bg-white px-3 py-3">
+      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
+      <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tones[tone]}`}>{value}</span>
+    </div>
+  );
+}
+
+function StatBadge({ label, value, tone }: { label: string; value: number; tone: "emerald" | "blue" | "slate" }) {
+  const tones = {
+    emerald: "bg-emerald-100 text-emerald-800",
+    blue: "bg-blue-100 text-blue-800",
+    slate: "bg-slate-100 text-slate-700",
+  };
+  return (
+    <div className="rounded-xl bg-slate-50 px-3 py-2 text-center">
+      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${tones[tone]}`}>{value}</span>
+    </div>
+  );
+}
+
+function MetricPanel({ title, value, subtitle }: { title: string; value: string; subtitle: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+      <p className="text-xs uppercase tracking-[0.25em] text-slate-500">{title}</p>
+      <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+    </div>
   );
 }

@@ -201,7 +201,14 @@ CREATE TABLE classroom_subjects (
   classroom_id UUID NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
   subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
   teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+  periods_per_week INTEGER NOT NULL DEFAULT 0,
+  lesson_duration INTEGER NOT NULL DEFAULT 1,
+  lesson_priority INTEGER NOT NULL DEFAULT 5,
+  is_timetable_locked BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (periods_per_week BETWEEN 0 AND 50),
+  CHECK (lesson_duration BETWEEN 1 AND 4),
+  CHECK (lesson_priority BETWEEN 1 AND 10),
   UNIQUE (school_id, classroom_id, subject_id)
 );
 

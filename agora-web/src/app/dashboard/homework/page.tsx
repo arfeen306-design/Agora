@@ -144,7 +144,7 @@ export default function HomeworkPage() {
   return (
     <>
       <Header title="Homework" />
-      <div className="p-6">
+      <div className={`p-6 ${isFamilyViewer ? "family-workspace" : ""}`}>
         {message && (
           <div className={`mb-4 rounded-lg p-3 text-sm ${message.includes("success") ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
             {message}
@@ -157,7 +157,7 @@ export default function HomeworkPage() {
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-white/80">Homework Tracker</p>
                 <h2 className="mt-2 text-3xl font-bold">Child Homework Feed</h2>
-                <p className="mt-2 text-sm text-white/85">
+                <p className="mt-2 text-sm text-white/[0.85]">
                   Teachers publish homework here. Families can monitor active tasks and upcoming due dates in read-only mode.
                 </p>
               </div>

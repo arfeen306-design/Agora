@@ -487,7 +487,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl bg-white/15 backdrop-blur px-3 py-2 border border-white/20">
+    <div className="rounded-xl bg-white/[0.15] backdrop-blur px-3 py-2 border border-white/20">
       <p className="text-xs text-cyan-100">{label}</p>
       <p className="text-lg font-semibold text-white">{value}</p>
     </div>

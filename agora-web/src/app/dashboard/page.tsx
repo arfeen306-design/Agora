@@ -5,9 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import AdminCommandCenter from "@/components/dashboard/admin/AdminCommandCenter";
+import ClassroomWeeklyTimetableBoard from "@/components/timetable/ClassroomWeeklyTimetableBoard";
 import { useAuth } from "@/lib/auth";
 import {
   getAttendance,
+  getClassroomManualTimetableBoard,
   getEvents,
   getMyReportCardHistory,
   getHomework,
@@ -16,6 +18,7 @@ import {
   getPeopleStudentAcademicSummary,
   getPeopleStudentTimeline,
   getStudentMarksSummary,
+  type ClassroomWeeklyTimetableBoardPayload,
   type FamilyReportCardHistoryItem,
   type MyLinkedStudentRecord,
 } from "@/lib/api";
@@ -166,6 +169,7 @@ export default function DashboardPage() {
   const [notices, setNotices] = useState<SchoolNotice[]>([]);
   const [timelineItems, setTimelineItems] = useState<FamilyTimelineItem[]>([]);
   const [reportCards, setReportCards] = useState<FamilyReportCardPreview[]>([]);
+  const [familyTimetableBoard, setFamilyTimetableBoard] = useState<ClassroomWeeklyTimetableBoardPayload | null>(null);
   const [panel, setPanel] = useState<ProgressPanel>({
     attendanceRate: 0,
     homeworkCompletionRate: 0,
@@ -236,6 +240,7 @@ export default function DashboardPage() {
           setNotices([]);
           setTimelineItems([]);
           setReportCards([]);
+          setFamilyTimetableBoard(null);
           setLoading(false);
           return;
         }
@@ -248,7 +253,8 @@ export default function DashboardPage() {
           setSelectedStudentId(resolvedStudentId);
         }
 
-        const [summary, timeline, marksSummary, todayAttendance, events, notifications, reportCardHistory] =
+        const selectedStudentRecord = students.find((student) => student.id === resolvedStudentId) || students[0];
+        const [summary, timeline, marksSummary, todayAttendance, events, notifications, reportCardHistory, timetableBoard] =
           await Promise.all([
             getPeopleStudentAcademicSummary(resolvedStudentId).catch(() => null),
             getPeopleStudentTimeline(resolvedStudentId, { max_events: "25" }).catch(() => null),
@@ -262,6 +268,9 @@ export default function DashboardPage() {
             getEvents({ date_from: today, page_size: "1" }).catch(() => null),
             getNotifications({ page_size: "6" }).catch(() => null),
             getMyReportCardHistory({ student_id: resolvedStudentId, page_size: 3 }).catch(() => null),
+            selectedStudentRecord?.classroom_id
+              ? getClassroomManualTimetableBoard(selectedStudentRecord.classroom_id).catch(() => null)
+              : Promise.resolve(null),
           ]);
 
         const attendanceRows = Array.isArray(todayAttendance?.data) ? todayAttendance.data : [];
@@ -371,6 +380,7 @@ export default function DashboardPage() {
         setNotices(noticeItems);
         setTimelineItems(activityItems);
         setReportCards((reportCardHistory?.data?.items || []).slice(0, 3));
+        setFamilyTimetableBoard(timetableBoard);
         setLoading(false);
         return;
       }
@@ -428,7 +438,7 @@ export default function DashboardPage() {
     return (
       <>
         <Header title="Dashboard" />
-        <div className="p-6">
+        <div className={`p-6 ${isParentOrStudent ? "family-dashboard" : ""}`}>
           <div className="card flex items-center gap-3">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
             <p className="text-sm text-gray-600">Opening your role dashboard...</p>
@@ -442,7 +452,7 @@ export default function DashboardPage() {
     return (
       <>
         <Header title="Dashboard" />
-        <div className="p-6">
+        <div className={`p-6 ${isParentOrStudent ? "family-dashboard" : ""}`}>
           <AdminCommandCenter firstName={user?.first_name} />
         </div>
       </>
@@ -475,14 +485,17 @@ export default function DashboardPage() {
       <Header title="Dashboard" />
       <div className="p-6">
         {isParentOrStudent ? (
-          <section className="mb-8 rounded-3xl bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-500 p-6 text-white shadow-lg">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <section className="relative mb-8 overflow-hidden rounded-[34px] border border-white/10 bg-[linear-gradient(135deg,#22053a_0%,#3b0764_38%,#140327_100%)] p-6 text-white shadow-[0_28px_80px_rgba(8,3,18,0.38)]">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(236,72,153,0.24),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(99,102,241,0.24),_transparent_32%)]" />
+            <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-fuchsia-500/10 blur-3xl" />
+            <div className="pointer-events-none absolute bottom-0 left-1/3 h-52 w-52 rounded-full bg-violet-500/10 blur-3xl" />
+            <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.24em] text-white/80">Family Dashboard</p>
+                <p className="text-xs uppercase tracking-[0.28em] text-fuchsia-100/80">Family Dashboard</p>
                 <h2 className="mt-2 text-3xl font-bold">
                   {selectedStudent ? `${linkedStudentName(selectedStudent)}'s School Pulse` : `Welcome back, ${user?.first_name}!`}
                 </h2>
-                <p className="mt-2 text-sm text-white/85">
+                <p className="mt-2 max-w-2xl text-sm text-white/[0.78]">
                   Live attendance, homework, test results, and school updates connected to teacher activity.
                 </p>
                 {linkedStudentClassroom(selectedStudent) && (
@@ -493,6 +506,11 @@ export default function DashboardPage() {
                       : ""}
                   </p>
                 )}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className="family-chip">Live updates from class teacher</span>
+                  <span className="family-chip">Attendance + homework + marks</span>
+                  <span className="family-chip">Read-only family view</span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <FamilyHeroBadge label="Today's Attendance" value={stats.attendanceValue} tone={statusTone(stats.attendanceValue)} />
@@ -562,6 +580,16 @@ export default function DashboardPage() {
 
         {isParentOrStudent && (
           <>
+            {familyTimetableBoard ? (
+              <div className="mb-8">
+                <ClassroomWeeklyTimetableBoard
+                  board={familyTimetableBoard}
+                  title="Weekly Timetable"
+                  subtitle="This is the live class timetable shared by the class teacher for the selected child."
+                />
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-4 mb-8">
               <FamilyStatCard
                 title="Today's Attendance"
@@ -587,6 +615,67 @@ export default function DashboardPage() {
                 hint="Unread messages from school"
                 tone="border-amber-200 bg-amber-50 text-amber-700"
               />
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_0.95fr_0.9fr] mb-8">
+              <div className="family-panel-soft">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Performance Arc</h3>
+                    <p className="mt-1 text-sm text-white/[0.58]">Attendance, homework completion, and marks average at a glance.</p>
+                  </div>
+                  <span className="family-chip">Live</span>
+                </div>
+                <div className="mt-5 flex items-end gap-3">
+                  {[
+                    { label: 'Attendance', value: panel.attendanceRate, colors: 'from-emerald-400 to-cyan-400' },
+                    { label: 'Homework', value: panel.homeworkCompletionRate, colors: 'from-sky-400 to-indigo-400' },
+                    { label: 'Marks', value: panel.marksAverage, colors: 'from-fuchsia-400 to-violet-400' },
+                  ].map((item) => (
+                    <div key={item.label} className="flex flex-1 flex-col items-center gap-2">
+                      <div className="flex h-32 w-full items-end rounded-[22px] bg-white/[0.06] p-2">
+                        <div className={`w-full rounded-[16px] bg-gradient-to-t ${item.colors}`} style={{ height: `${Math.max(12, Math.min(100, item.value))}%` }} />
+                      </div>
+                      <p className="text-xs font-semibold text-white">{item.value.toFixed(0)}%</p>
+                      <p className="text-center text-[11px] text-white/50">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="family-panel-soft">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Recent Test Momentum</h3>
+                    <p className="mt-1 text-sm text-white/[0.58]">A quick look at the latest published scores.</p>
+                  </div>
+                  <span className="family-chip">Recent</span>
+                </div>
+                <div className="mt-5 flex items-end gap-3">
+                  {(recentTests.length ? recentTests.slice(0, 4) : [{ id: 'placeholder', title: 'No tests', percentage: 0, marks: 0, maxMarks: 0, type: 'test' } as RecentTest]).map((test) => (
+                    <div key={test.id} className="flex flex-1 flex-col items-center gap-2">
+                      <div className="flex h-32 w-full items-end rounded-[22px] bg-white/[0.06] p-2">
+                        <div className="w-full rounded-[16px] bg-gradient-to-t from-fuchsia-500 via-violet-500 to-indigo-400" style={{ height: `${Math.max(12, Math.min(100, test.percentage || 0))}%` }} />
+                      </div>
+                      <p className="text-xs font-semibold text-white">{Number(test.percentage || 0).toFixed(0)}%</p>
+                      <p className="text-center text-[11px] text-white/50">{recentTests.length ? test.title : 'Awaiting data'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="family-panel-soft">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">School Pulse</h3>
+                    <p className="mt-1 text-sm text-white/[0.58]">Communication and publishing activity around the child.</p>
+                  </div>
+                  <span className="family-chip">This week</span>
+                </div>
+                <div className="mt-5 space-y-3">
+                  <FamilySignalRow label="Timeline updates" value={timelineItems.length} />
+                  <FamilySignalRow label="Notices from school" value={notices.length} />
+                  <FamilySignalRow label="Published report cards" value={reportCards.length} />
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
@@ -800,6 +889,17 @@ function FamilyStatCard({
       <p className="text-xs uppercase tracking-[0.18em]">{title}</p>
       <p className="mt-2 text-3xl font-bold">{value}</p>
       <p className="mt-2 text-sm opacity-90">{hint}</p>
+    </div>
+  );
+}
+
+function FamilySignalRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-white/[0.08] bg-white/5 px-4 py-3">
+      <span className="text-sm text-white/[0.68]">{label}</span>
+      <span className="rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-3 py-1 text-sm font-semibold text-white">
+        {value}
+      </span>
     </div>
   );
 }

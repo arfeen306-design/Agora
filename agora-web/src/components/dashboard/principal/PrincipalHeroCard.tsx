@@ -34,7 +34,7 @@ export default function PrincipalHeroCard({
           <p className="mt-3 text-xs text-blue-100/90">{formatTimestamp(generatedAt)}</p>
         </div>
 
-        <div className="rounded-xl border border-white/25 bg-white/15 p-4 backdrop-blur">
+        <div className="rounded-xl border border-white/25 bg-white/[0.15] p-4 backdrop-blur">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-100">Today Attendance</p>
           <p className="mt-1 text-3xl font-bold">{attendanceRate.toFixed(1)}%</p>
           <p className="text-sm text-blue-100">{presentCount} present out of {totalCount}</p>

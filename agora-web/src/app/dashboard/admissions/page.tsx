@@ -10,7 +10,7 @@ import { ADMISSION_STAGE_LABEL, ADMISSION_STAGE_ORDER } from "@/components/dashb
 import { useAuth } from "@/lib/auth";
 import { getAdmissionsPipeline, type AdmissionPipelineData } from "@/lib/api";
 
-const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
+const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk", "headmistress"];
 
 function canViewAdmissions(roles: string[] = []) {
   return ADMISSIONS_VIEW_ROLES.some((role) => roles.includes(role));
@@ -72,7 +72,7 @@ export default function AdmissionsDashboardPage() {
           <section className="card">
             <h2 className="text-xl font-semibold text-gray-900">Access Restricted</h2>
             <p className="mt-2 text-sm text-gray-600">
-              Admissions workflows are available for School Admin, Principal, Vice Principal, and Front Desk roles.
+              Admissions workflows are available for School Admin, Principal, Vice Principal, Headmistress, and Front Desk roles.
             </p>
           </section>
         </div>

@@ -857,7 +857,7 @@ export default function ReportsPage() {
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/30 bg-white/15 px-3 py-2 backdrop-blur">
+    <div className="rounded-xl border border-white/30 bg-white/[0.15] px-3 py-2 backdrop-blur">
       <p className="text-xs text-indigo-100">{label}</p>
       <p className="text-lg font-semibold text-white">{value}</p>
     </div>

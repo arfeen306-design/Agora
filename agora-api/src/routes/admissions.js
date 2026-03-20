@@ -59,6 +59,7 @@ const pipelineQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   academic_year_id: z.string().uuid().optional(),
+  section_id: z.string().uuid().optional(),
   limit_per_stage: z.coerce.number().int().min(1).max(60).default(20),
 });
 
@@ -74,6 +75,7 @@ const listApplicationsQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   academic_year_id: z.string().uuid().optional(),
+  section_id: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   page_size: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -132,6 +134,117 @@ function hasRole(auth, role) {
 
 function hasAnyRole(auth, allowedRoles) {
   return allowedRoles.some((role) => hasRole(auth, role));
+}
+
+function isSchoolLeadership(auth) {
+  return hasAnyRole(auth, ["school_admin", "principal", "vice_principal"]);
+}
+
+async function listVisibleSectionIdsForHm(auth) {
+  if (!hasRole(auth, "headmistress")) return [];
+  const result = await pool.query(
+    `
+      SELECT ss.id
+      FROM school_sections ss
+      WHERE ss.school_id = $1
+        AND (
+          ss.head_user_id = $2
+          OR ss.coordinator_user_id = $2
+          OR EXISTS (
+            SELECT 1
+            FROM staff_profiles sp
+            WHERE sp.school_id = ss.school_id
+              AND sp.user_id = $2
+              AND sp.primary_section_id = ss.id
+          )
+        )
+    `,
+    [auth.schoolId, auth.userId]
+  );
+  return result.rows.map((row) => row.id);
+}
+
+async function resolveVisibleAdmissionSectionIds({ auth, sectionId }) {
+  if (!hasRole(auth, "headmistress") || isSchoolLeadership(auth)) {
+    return sectionId ? [sectionId] : null;
+  }
+
+  const visibleSectionIds = await listVisibleSectionIdsForHm(auth);
+  if (!visibleSectionIds.length) {
+    throw new AppError(403, "FORBIDDEN", "Headmistress scope does not include any section");
+  }
+
+  if (!sectionId) return visibleSectionIds;
+  if (!visibleSectionIds.includes(sectionId)) {
+    throw new AppError(403, "FORBIDDEN", "Headmistress scope does not include this section");
+  }
+  return [sectionId];
+}
+
+function buildAdmissionSectionScopeClause(paramRef) {
+  return `
+    AND (
+      COALESCE(dc.section_id, ds.id) = ANY(${paramRef}::uuid[])
+      OR EXISTS (
+        SELECT 1
+        FROM student_enrollments se
+        JOIN classrooms ec
+          ON ec.id = se.classroom_id
+         AND ec.school_id = se.school_id
+        WHERE se.school_id = s.school_id
+          AND se.student_id = s.id
+          AND ec.section_id = ANY(${paramRef}::uuid[])
+      )
+    )
+  `;
+}
+
+async function assertAdmissionVisibleToHm({ auth, studentId }) {
+  if (!hasRole(auth, "headmistress") || isSchoolLeadership(auth)) return;
+
+  const visibleSectionIds = await listVisibleSectionIdsForHm(auth);
+  if (!visibleSectionIds.length) {
+    throw new AppError(403, "FORBIDDEN", "Headmistress scope does not include any section");
+  }
+
+  const check = await pool.query(
+    `
+      SELECT 1
+      FROM students s
+      LEFT JOIN admission_applications aa
+        ON aa.school_id = s.school_id
+       AND aa.student_id = s.id
+      LEFT JOIN classrooms dc
+        ON dc.id = aa.desired_classroom_id
+       AND dc.school_id = s.school_id
+      LEFT JOIN school_sections ds
+        ON ds.school_id = s.school_id
+       AND dc.id IS NULL
+       AND aa.desired_section_label IS NOT NULL
+       AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+      WHERE s.school_id = $1
+        AND s.id = $2
+        AND (
+          COALESCE(dc.section_id, ds.id) = ANY($3::uuid[])
+          OR EXISTS (
+            SELECT 1
+            FROM student_enrollments se
+            JOIN classrooms ec
+              ON ec.id = se.classroom_id
+             AND ec.school_id = se.school_id
+            WHERE se.school_id = s.school_id
+              AND se.student_id = s.id
+              AND ec.section_id = ANY($3::uuid[])
+          )
+        )
+      LIMIT 1
+    `,
+    [auth.schoolId, studentId, visibleSectionIds]
+  );
+
+  if (!check.rows[0]) {
+    throw new AppError(403, "FORBIDDEN", "Headmistress scope does not include this admission record");
+  }
 }
 
 async function ensureClassroomInSchool(schoolId, classroomId) {
@@ -306,7 +419,7 @@ async function ensureApplicationRow(client, { schoolId, studentId, actorUserId }
 router.get(
   "/admissions/pipeline",
   requireAuth,
-  requireRoles("school_admin", "principal", "vice_principal", "front_desk"),
+  requireRoles("school_admin", "principal", "vice_principal", "front_desk", "headmistress"),
   asyncHandler(async (req, res) => {
     const query = parseSchema(pipelineQuerySchema, req.query, "Invalid admissions pipeline query");
     if (query.date_from && query.date_to && query.date_from > query.date_to) {
@@ -356,6 +469,15 @@ router.get(
       `;
     }
 
+    const visibleSectionIds = await resolveVisibleAdmissionSectionIds({
+      auth: req.auth,
+      sectionId: query.section_id,
+    });
+    if (visibleSectionIds?.length) {
+      params.push(visibleSectionIds);
+      where += buildAdmissionSectionScopeClause(`$${params.length}`);
+    }
+
     const rows = await pool.query(
       `
         SELECT
@@ -375,6 +497,14 @@ router.get(
         LEFT JOIN admission_applications aa
           ON aa.school_id = s.school_id
          AND aa.student_id = s.id
+        LEFT JOIN classrooms dc
+          ON dc.id = aa.desired_classroom_id
+         AND dc.school_id = s.school_id
+        LEFT JOIN school_sections ds
+          ON ds.school_id = s.school_id
+         AND dc.id IS NULL
+         AND aa.desired_section_label IS NOT NULL
+         AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
         WHERE ${where}
         ORDER BY s.created_at DESC
       `,
@@ -442,7 +572,7 @@ router.get(
 router.get(
   "/admissions/applications",
   requireAuth,
-  requireRoles("school_admin", "principal", "vice_principal", "front_desk"),
+  requireRoles("school_admin", "principal", "vice_principal", "front_desk", "headmistress"),
   asyncHandler(async (req, res) => {
     const query = parseSchema(listApplicationsQuerySchema, req.query, "Invalid admissions applications query");
     if (query.date_from && query.date_to && query.date_from > query.date_to) {
@@ -494,6 +624,29 @@ router.get(
       `);
     }
 
+    const visibleSectionIds = await resolveVisibleAdmissionSectionIds({
+      auth: req.auth,
+      sectionId: query.section_id,
+    });
+    if (visibleSectionIds?.length) {
+      params.push(visibleSectionIds);
+      where.push(`
+        (
+          COALESCE(dc.section_id, ds.id) = ANY($${params.length}::uuid[])
+          OR EXISTS (
+            SELECT 1
+            FROM student_enrollments se
+            JOIN classrooms ec
+              ON ec.id = se.classroom_id
+             AND ec.school_id = se.school_id
+            WHERE se.school_id = s.school_id
+              AND se.student_id = s.id
+              AND ec.section_id = ANY($${params.length}::uuid[])
+          )
+        )
+      `);
+    }
+
     const countResult = await pool.query(
       `
         SELECT COUNT(*)::int AS total
@@ -501,6 +654,14 @@ router.get(
         LEFT JOIN admission_applications aa
           ON aa.school_id = s.school_id
          AND aa.student_id = s.id
+        LEFT JOIN classrooms dc
+          ON dc.id = aa.desired_classroom_id
+         AND dc.school_id = s.school_id
+        LEFT JOIN school_sections ds
+          ON ds.school_id = s.school_id
+         AND dc.id IS NULL
+         AND aa.desired_section_label IS NOT NULL
+         AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
         WHERE ${where.join(" AND ")}
       `,
       params
@@ -535,6 +696,14 @@ router.get(
         LEFT JOIN admission_applications aa
           ON aa.school_id = s.school_id
          AND aa.student_id = s.id
+        LEFT JOIN classrooms dc
+          ON dc.id = aa.desired_classroom_id
+         AND dc.school_id = s.school_id
+        LEFT JOIN school_sections ds
+          ON ds.school_id = s.school_id
+         AND dc.id IS NULL
+         AND aa.desired_section_label IS NOT NULL
+         AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
         WHERE ${where.join(" AND ")}
         ORDER BY s.created_at DESC
         LIMIT $${listParams.length - 1}
@@ -562,9 +731,10 @@ router.get(
 router.get(
   "/admissions/applications/:studentId",
   requireAuth,
-  requireRoles("school_admin", "principal", "vice_principal", "front_desk"),
+  requireRoles("school_admin", "principal", "vice_principal", "front_desk", "headmistress"),
   asyncHandler(async (req, res) => {
     const path = parseSchema(studentPathSchema, req.params, "Invalid student id");
+    await assertAdmissionVisibleToHm({ auth: req.auth, studentId: path.studentId });
     const application = await getApplicationByStudent({
       schoolId: req.auth.schoolId,
       studentId: path.studentId,

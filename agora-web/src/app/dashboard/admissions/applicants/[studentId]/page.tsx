@@ -22,7 +22,7 @@ import {
   type AdmissionStatus,
 } from "@/lib/api";
 
-const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
+const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk", "headmistress"];
 const ADMISSIONS_ADMIT_ROLES = ["school_admin", "front_desk"];
 const ADMISSIONS_MANAGE_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
 const TRANSITION_ROLE_MAP: Partial<Record<AdmissionStatus, Partial<Record<AdmissionStatus, string[]>>>> = {
@@ -307,7 +307,7 @@ export default function ApplicantDetailPage() {
               <p className="mt-2 text-sm text-indigo-100">Student Code: {detail.student.student_code}</p>
               <div className="mt-2"><AdmissionStatusPill status={detail.student.admission_status} /></div>
             </div>
-            <div className="rounded-xl border border-white/25 bg-white/15 p-4 backdrop-blur">
+            <div className="rounded-xl border border-white/25 bg-white/[0.15] p-4 backdrop-blur">
               <p className="text-xs uppercase tracking-wide text-indigo-100">Pipeline Progress</p>
               <p className="mt-1 text-2xl font-bold">{stageProgress}%</p>
               <div className="mt-2 h-2.5 w-56 rounded-full bg-white/20">

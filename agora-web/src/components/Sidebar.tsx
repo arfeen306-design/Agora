@@ -2,11 +2,20 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/lib/auth";
+import { formatRoleLabel, getRoleTheme } from "@/lib/role-theme";
 
 const FAMILY_PRIORITY_ROLES = ["parent", "student"];
+
+type NavItem = {
+  label: string;
+  href?: string;
+  icon: React.ReactNode;
+  roles: string[];
+  children?: NavItem[];
+};
 
 function hasAnyRole(roles: string[] = [], allowed: string[]) {
   return allowed.some((role) => roles.includes(role));
@@ -19,7 +28,12 @@ function resolveSidebarRoles(roles: string[] = []) {
   return roles;
 }
 
-const navItems = [
+function isPathMatch(pathname: string, href: string) {
+  if (href === "/dashboard") return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+const navItems: NavItem[] = [
   {
     label: "Dashboard",
     href: "/dashboard",
@@ -53,7 +67,6 @@ const navItems = [
   },
   {
     label: "Class Teacher",
-    href: "/dashboard/class-teacher",
     icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h10M7 16h6" />
@@ -61,48 +74,70 @@ const navItems = [
       </svg>
     ),
     roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
-  },
-  {
-    label: "Class Attendance",
-    href: "/dashboard/class-teacher/attendance",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 4h6m-7 4h8m-9 4h10m-11 4h12" />
-      </svg>
-    ),
-    roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
-  },
-  {
-    label: "Class Results",
-    href: "/dashboard/class-teacher/results",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v18m0 0h14m-14 0l4-8 4 4 6-10" />
-      </svg>
-    ),
-    roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
-  },
-  {
-    label: "Report Cards",
-    href: "/dashboard/class-teacher/report-cards",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3h7l5 5v13a1 1 0 01-1 1H7a2 2 0 01-2-2V5a2 2 0 012-2z" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3v5h5M9 13h6M9 17h6M9 9h2" />
-      </svg>
-    ),
-    roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
-  },
-  {
-    label: "Exam Terms",
-    href: "/dashboard/exam-terms",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    ),
-    roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+    children: [
+      {
+        label: "Overview",
+        href: "/dashboard/class-teacher",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+        ),
+        roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+      },
+      {
+        label: "Timetable",
+        href: "/dashboard/class-teacher/timetable",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        ),
+        roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+      },
+      {
+        label: "Class Attendance",
+        href: "/dashboard/class-teacher/attendance",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 4h6m-7 4h8m-9 4h10m-11 4h12" />
+          </svg>
+        ),
+        roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+      },
+      {
+        label: "Class Results",
+        href: "/dashboard/class-teacher/results",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v18m0 0h14m-14 0l4-8 4 4 6-10" />
+          </svg>
+        ),
+        roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+      },
+      {
+        label: "Report Cards",
+        href: "/dashboard/class-teacher/report-cards",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3h7l5 5v13a1 1 0 01-1 1H7a2 2 0 01-2-2V5a2 2 0 012-2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3v5h5M9 13h6M9 17h6M9 9h2" />
+          </svg>
+        ),
+        roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+      },
+      {
+        label: "Exam Terms",
+        href: "/dashboard/exam-terms",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        ),
+        roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher"],
+      },
+    ],
   },
   {
     label: "Admissions",
@@ -252,16 +287,6 @@ const navItems = [
     roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher", "parent", "student"],
   },
   {
-    label: "Timetable",
-    href: "/dashboard/timetable",
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M4 20h16a2 2 0 002-2V8a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
-      </svg>
-    ),
-    roles: ["school_admin", "principal", "vice_principal", "headmistress", "teacher", "parent", "student"],
-  },
-  {
     label: "Homework",
     href: "/dashboard/homework",
     icon: (
@@ -374,62 +399,191 @@ const navItems = [
   },
 ];
 
+
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useAuth();
   const effectiveRoles = resolveSidebarRoles(user?.roles || []);
+  const roleTheme = getRoleTheme(effectiveRoles);
+  const [isPinned, setIsPinned] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const isExpanded = isPinned || isHovered;
 
-  const visibleItems = navItems.filter((item) => {
-    if (effectiveRoles.includes("super_admin")) return true;
-    return item.roles.some((role) => effectiveRoles.includes(role));
-  });
+  const visibleItems = useMemo(
+    () =>
+      navItems
+        .map((item) => ({
+          ...item,
+          children: item.children?.filter((child) => {
+            if (effectiveRoles.includes("super_admin")) return true;
+            return child.roles.some((role) => effectiveRoles.includes(role));
+          }),
+        }))
+        .filter((item) => {
+        if (effectiveRoles.includes("super_admin")) return true;
+        return item.roles.some((role) => effectiveRoles.includes(role));
+      }),
+    [effectiveRoles]
+  );
 
   useEffect(() => {
     visibleItems.forEach((item) => {
-      router.prefetch(item.href);
+      if (item.href) router.prefetch(item.href);
+      item.children?.forEach((child) => {
+        if (child.href) router.prefetch(child.href);
+      });
     });
   }, [router, visibleItems]);
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 flex flex-col">
-      <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-200">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-600 text-white font-bold text-lg">A</div>
-        <div>
-          <h1 className="text-lg font-bold text-gray-900">Agora</h1>
-          <p className="text-xs text-gray-500">School Operating System</p>
+    <aside
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className={`fixed inset-y-0 left-0 z-30 flex flex-col overflow-hidden border-r border-white/10 bg-[linear-gradient(180deg,#2a0717_0%,#4a152c_38%,#220916_100%)] text-white shadow-[18px_0_45px_rgba(15,23,42,0.18)] transition-[width] duration-300 ${isExpanded ? "w-72" : "w-[92px]"}`}
+    >
+      <div className="border-b border-white/10 px-4 py-5">
+        <div className={`flex items-center ${isExpanded ? "justify-between gap-3" : "justify-center"}`}>
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-rose-500 text-lg font-bold text-white shadow-lg shadow-violet-950/30">
+              A
+            </div>
+            <div className={`overflow-hidden transition-all duration-300 ${isExpanded ? "max-w-[180px] opacity-100" : "max-w-0 opacity-0"}`}>
+              <h1 className="text-lg font-bold text-white">Agora</h1>
+              <p className="text-xs text-white/70">School Operating System</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsPinned((prev) => !prev)}
+            aria-label={isPinned ? "Collapse navigation" : "Pin navigation open"}
+            className={`rounded-full border border-white/[0.12] bg-white/[0.08] p-2 text-white/75 transition hover:bg-white/[0.12] hover:text-white ${isExpanded ? "opacity-100" : "pointer-events-none opacity-0"}`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              {isPinned ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7-7-7 7" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7 7 7-7" />
+              )}
+            </svg>
+          </button>
+        </div>
+
+        <div
+          className={`mt-4 rounded-2xl border border-white/10 bg-white/[0.08] backdrop-blur transition-all duration-300 ${
+            isExpanded ? "px-3 py-3 opacity-100" : "h-0 overflow-hidden border-transparent px-0 py-0 opacity-0"
+          }`}
+        >
+          <p className="text-[11px] uppercase tracking-[0.24em] text-white/[0.52]">Active role</p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${roleTheme.badgeClass}`}>
+              {roleTheme.label}
+            </span>
+            <span className="text-[11px] text-white/[0.68]">{visibleItems.length} modules</span>
+          </div>
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
         {visibleItems.map((item) => {
-          const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
+          const isSelfActive = item.href ? pathname === item.href : false;
+          const hasActiveChild =
+            item.children?.some((child) => (child.href ? isPathMatch(pathname, child.href) : false)) || false;
+          const isParentActive = isSelfActive || hasActiveChild;
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                isActive ? "bg-primary-50 text-primary-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-              }`}
-            >
-              <span className={isActive ? "text-primary-600" : "text-gray-400"}>{item.icon}</span>
-              {item.label}
-            </Link>
+            <div key={item.href || item.label} className="space-y-1">
+              {item.children?.length ? (
+                <div
+                  title={isExpanded ? undefined : item.label}
+                  className={`group flex items-center rounded-2xl py-2.5 text-sm font-medium transition-all ${
+                    hasActiveChild
+                      ? "border border-white/[0.12] bg-white/[0.05] text-white"
+                      : "border border-transparent text-white/[0.86] hover:bg-white/[0.04]"
+                  } ${isExpanded ? "justify-start gap-3 px-3" : "justify-center px-0"}`}
+                >
+                  <span className={isParentActive ? "text-white" : "text-white/[0.72] group-hover:text-white"}>{item.icon}</span>
+                  <span
+                    className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${
+                      isExpanded ? "max-w-[190px] opacity-100" : "max-w-0 opacity-0"
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                  {isExpanded ? (
+                    <span
+                      className={`ml-auto rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${
+                        hasActiveChild
+                          ? "border border-violet-200/30 bg-violet-300/15 text-violet-100"
+                          : "border border-white/10 bg-white/[0.06] text-white/[0.58]"
+                      }`}
+                    >
+                      {hasActiveChild ? "Open" : "Workspace"}
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                <Link
+                  href={item.href || "#"}
+                  title={isExpanded ? undefined : item.label}
+                  className={`group flex items-center rounded-2xl py-2.5 text-sm font-medium transition-all ${
+                    isSelfActive
+                      ? "bg-white/[0.14] text-white shadow-[0_18px_32px_rgba(15,23,42,0.18)] ring-1 ring-white/10"
+                      : "text-white/[0.86] hover:bg-white/[0.08] hover:text-white"
+                  } ${isExpanded ? "justify-start gap-3 px-3" : "justify-center px-0"}`}
+                >
+                  <span className={isParentActive ? "text-white" : "text-white/[0.72] group-hover:text-white"}>{item.icon}</span>
+                  <span
+                    className={`overflow-hidden whitespace-nowrap transition-all duration-300 ${
+                      isExpanded ? "max-w-[190px] opacity-100" : "max-w-0 opacity-0"
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                </Link>
+              )}
+
+              {isExpanded && item.children?.length ? (
+                <div className="ml-6 space-y-1 border-l border-white/10 pl-3">
+                  {item.children.map((child) => {
+                    if (!child.href) return null;
+                    const isChildActive = child.href ? isPathMatch(pathname, child.href) : false;
+                    return (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm transition-all ${
+                          isChildActive
+                            ? "bg-white/[0.14] text-white shadow-[0_12px_22px_rgba(15,23,42,0.16)] ring-1 ring-white/10"
+                            : "text-white/[0.72] hover:bg-white/[0.08] hover:text-white"
+                        }`}
+                      >
+                        <span className={isChildActive ? "text-white" : "text-white/[0.56]"}>{child.icon}</span>
+                        <span className="truncate">{child.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           );
         })}
       </nav>
 
-      <div className="border-t border-gray-200 px-4 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100 text-primary-700 text-sm font-semibold">
+      <div className="border-t border-white/10 px-4 py-4">
+        <div
+          className={`flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.07] py-3 backdrop-blur transition-all duration-300 ${
+            isExpanded ? "px-3" : "justify-center px-0"
+          }`}
+        >
+          <div className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold shadow-sm ${roleTheme.avatarClass}`}>
             {user?.first_name?.[0] || "?"}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">
+          <div className={`min-w-0 flex-1 overflow-hidden transition-all duration-300 ${isExpanded ? "max-w-[180px] opacity-100" : "max-w-0 opacity-0"}`}>
+            <p className="truncate text-sm font-medium text-white">
               {user?.first_name} {user?.last_name}
             </p>
-            <p className="text-xs text-gray-500 truncate capitalize">
-              {effectiveRoles[0]?.replace("_", " ") || user?.roles?.[0]?.replace("_", " ") || "User"}
+            <p className="truncate text-xs text-white/[0.7]">
+              {formatRoleLabel(effectiveRoles[0] || user?.roles?.[0] || "User")}
             </p>
           </div>
         </div>

@@ -287,12 +287,12 @@ export default function FamilyReportCardDetailPage() {
                     {isFamilyViewer ? "Family Report Card" : "Report Card"}
                   </p>
                   <h2 className="mt-2 text-3xl font-bold">{reportCard.student.full_name}</h2>
-                  <p className="mt-2 text-sm text-white/85">
+                  <p className="mt-2 text-sm text-white/[0.85]">
                     {reportCard.classroom.grade_label}
                     {reportCard.classroom.section_label ? ` • Section ${reportCard.classroom.section_label}` : ""}
                     {reportCard.classroom.classroom_code ? ` • ${reportCard.classroom.classroom_code}` : ""}
                   </p>
-                  <p className="mt-2 text-sm text-white/85">
+                  <p className="mt-2 text-sm text-white/[0.85]">
                     {reportCard.exam_term.name} ({reportCard.exam_term.term_type})
                   </p>
                 </div>

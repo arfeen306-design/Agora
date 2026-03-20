@@ -358,6 +358,28 @@ export default function AdminCommandCenter({ firstName }: AdminCommandCenterProp
     [sections]
   );
 
+  const admissionsDistribution: ChartPoint[] = useMemo(
+    () => stageRows.filter((row) => row.count > 0).map((row) => ({ label: row.stage.replaceAll("_", " "), value: row.count })),
+    [stageRows]
+  );
+
+  const sectionHistogramSeries: ChartPoint[] = useMemo(() => {
+    const bins = [
+      { label: "1-40", min: 1, max: 40, value: 0 },
+      { label: "41-80", min: 41, max: 80, value: 0 },
+      { label: "81-120", min: 81, max: 120, value: 0 },
+      { label: "121+", min: 121, max: Number.POSITIVE_INFINITY, value: 0 },
+    ];
+
+    sections.forEach((section) => {
+      const students = Number(section.active_students || 0);
+      const bin = bins.find((candidate) => students >= candidate.min && students <= candidate.max);
+      if (bin) bin.value += 1;
+    });
+
+    return bins;
+  }, [sections]);
+
   const unassignedSections = Math.max(0, sections.length - hmCount);
   const leadershipCoverageRate = sections.length > 0 ? (hmCount / sections.length) * 100 : 0;
   const payrollCoverageRate =
@@ -423,16 +445,16 @@ export default function AdminCommandCenter({ firstName }: AdminCommandCenterProp
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-500 p-6 text-white shadow-lg">
+      <section className="rounded-[28px] bg-gradient-to-r from-[#5b1634] via-[#6d1f58] to-[#4f46e5] p-6 text-white shadow-[0_24px_60px_rgba(91,22,52,0.24)]">
         <p className="text-xs uppercase tracking-[0.25em] text-white/80">Admin Command Center</p>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-3xl font-bold">Welcome back, {firstName || "Admin"}!</h2>
-            <p className="mt-1 text-sm text-white/85">
+            <p className="mt-1 text-sm text-white/[0.85]">
               Full-school operational snapshot: admissions, academics, staffing, finance, and leadership signals.
             </p>
           </div>
-          <div className="rounded-xl bg-white/15 px-4 py-2 text-sm">
+          <div className="rounded-xl bg-white/[0.15] px-4 py-2 text-sm">
             <p>School: {profile?.name || "—"}</p>
             <p>Branch: {profile?.branch_name || "Main Campus"}</p>
           </div>
@@ -572,6 +594,54 @@ export default function AdminCommandCenter({ firstName }: AdminCommandCenterProp
           href={`/dashboard/reports${dashboardQuery}`}
           tone={totalCriticalAlerts > 0 ? "rose" : "amber"}
         />
+      </section>
+
+      <section className="overflow-hidden rounded-[28px] border border-[#ead6de] bg-[linear-gradient(180deg,#fff8fb_0%,#ffffff_100%)] p-6 shadow-[0_22px_55px_rgba(76,29,149,0.08)]">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.26em] text-[#8a4760]">Analytics Studio</p>
+            <h3 className="mt-2 text-2xl font-bold text-slate-950">School activity in graphs</h3>
+            <p className="mt-1 text-sm text-slate-500">Line, bar, donut, and histogram views for daily leadership decisions.</p>
+          </div>
+          <Link href={`/dashboard/reports${dashboardQuery}`} className="rounded-full border border-[#d7c0ca] bg-white px-4 py-2 text-sm font-semibold text-[#7a2948] transition hover:border-[#b86a8a] hover:text-[#661d3a]">
+            Open executive reports
+          </Link>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
+          <div className="rounded-3xl border border-[#eee2e7] bg-white p-5 shadow-sm">
+            <LineTrendChart
+              title="Student Present %"
+              subtitle="Weekly attendance line"
+              points={attendanceSeries}
+              strokeClass="stroke-violet-600"
+              fillClass="fill-violet-50"
+              dotClass="fill-violet-600"
+            />
+          </div>
+          <div className="rounded-3xl border border-[#eee2e7] bg-white p-5 shadow-sm">
+            <DonutBreakdownChart title="Admissions Stage Mix" subtitle="Share of applicants by current stage" points={admissionsDistribution} emptyMessage="No active admissions stages yet." />
+          </div>
+          <div className="rounded-3xl border border-[#eee2e7] bg-white p-5 shadow-sm">
+            <div className="mb-3">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Finance bars</p>
+              <p className="text-sm text-gray-500">Collected, payroll, overdue, and net position.</p>
+            </div>
+            <BarMixChart
+              points={financeSeries}
+              currency
+              toneByLabel={{
+                Collected: "bg-emerald-500",
+                Payroll: "bg-amber-500",
+                Overdue: "bg-rose-500",
+                Net: netCash >= 0 ? "bg-violet-600" : "bg-red-600",
+              }}
+            />
+          </div>
+          <div className="rounded-3xl border border-[#eee2e7] bg-white p-5 shadow-sm">
+            <HistogramChart title="Section Size Histogram" subtitle="How many sections fall into each student-load band" points={sectionHistogramSeries} />
+          </div>
+        </div>
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1008,22 +1078,25 @@ function SnapshotTile({
   href: string;
 }) {
   const toneStyles: Record<string, string> = {
-    emerald: "from-emerald-500/15 to-emerald-100 border-emerald-200",
-    blue: "from-blue-500/15 to-blue-100 border-blue-200",
-    violet: "from-violet-500/15 to-violet-100 border-violet-200",
-    teal: "from-cyan-500/15 to-cyan-100 border-cyan-200",
-    amber: "from-amber-500/15 to-amber-100 border-amber-200",
-    rose: "from-rose-500/15 to-rose-100 border-rose-200",
+    emerald: "border-emerald-300/30 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.22),_transparent_28%),linear-gradient(135deg,#09372f_0%,#0e6e63_52%,#5eead4_100%)]",
+    blue: "border-blue-300/30 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.22),_transparent_28%),linear-gradient(135deg,#18285f_0%,#3047a1_54%,#bfdbfe_100%)]",
+    violet: "border-violet-300/30 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.20),_transparent_28%),linear-gradient(135deg,#32124c_0%,#6d28d9_52%,#f5d0fe_100%)]",
+    teal: "border-cyan-300/30 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.22),_transparent_28%),linear-gradient(135deg,#0b3350_0%,#0ea5e9_56%,#cffafe_100%)]",
+    amber: "border-amber-300/30 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.22),_transparent_28%),linear-gradient(135deg,#43210e_0%,#b45309_52%,#fde68a_100%)]",
+    rose: "border-rose-300/30 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.2),_transparent_28%),linear-gradient(135deg,#4a1024_0%,#be185d_52%,#fecdd3_100%)]",
   };
 
   return (
     <Link
       href={href}
-      className={`rounded-xl border bg-gradient-to-r px-4 py-3 transition hover:-translate-y-0.5 hover:shadow-sm ${toneStyles[tone]}`}
+      className={`relative overflow-hidden rounded-[24px] border px-5 py-4 text-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(15,23,42,0.22)] ${toneStyles[tone]}`}
     >
-      <p className="text-[11px] uppercase tracking-[0.15em] text-gray-600">{label}</p>
-      <p className="mt-1 text-xl font-bold text-gray-900">{value}</p>
-      <p className="mt-1 text-xs text-gray-600">{hint}</p>
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),transparent_36%)]" />
+      <div className="relative">
+        <p className="text-[11px] uppercase tracking-[0.28em] text-white/[0.72]">{label}</p>
+        <p className="mt-2 text-4xl font-bold leading-none text-white drop-shadow-sm">{value}</p>
+        <p className="mt-3 text-sm text-white/[0.78]">{hint}</p>
+      </div>
     </Link>
   );
 }
@@ -1174,6 +1247,132 @@ function BarMixChart({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+
+function DonutBreakdownChart({
+  title,
+  subtitle,
+  points,
+  emptyMessage,
+}: {
+  title: string;
+  subtitle: string;
+  points: ChartPoint[];
+  emptyMessage: string;
+}) {
+  if (!points.length) {
+    return (
+      <div>
+        <p className="text-xs uppercase tracking-wide text-gray-500">{title}</p>
+        <p className="mt-1 text-sm text-gray-500">{emptyMessage}</p>
+      </div>
+    );
+  }
+
+  const total = points.reduce((sum, point) => sum + Number(point.value || 0), 0) || 1;
+  const radius = 58;
+  const circumference = 2 * Math.PI * radius;
+  const colors = ["stroke-violet-600", "stroke-fuchsia-500", "stroke-cyan-500", "stroke-amber-500", "stroke-rose-500", "stroke-emerald-500"];
+  let offset = 0;
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">{title}</p>
+          <p className="text-sm text-gray-500">{subtitle}</p>
+        </div>
+        <p className="text-sm font-semibold text-slate-900">{total} total</p>
+      </div>
+      <div className="flex flex-col items-center gap-5 md:flex-row md:items-start">
+        <div className="relative flex h-40 w-40 items-center justify-center">
+          <svg viewBox="0 0 160 160" className="h-40 w-40 -rotate-90">
+            <circle cx="80" cy="80" r={radius} className="fill-none stroke-gray-100" strokeWidth="20" />
+            {points.map((point, index) => {
+              const segment = (Number(point.value || 0) / total) * circumference;
+              const segmentOffset = offset;
+              offset += segment;
+              return (
+                <circle
+                  key={`${point.label}-${index}`}
+                  cx="80"
+                  cy="80"
+                  r={radius}
+                  className={`fill-none ${colors[index % colors.length]}`}
+                  strokeWidth="20"
+                  strokeDasharray={`${segment} ${circumference - segment}`}
+                  strokeDashoffset={-segmentOffset}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+          </svg>
+          <div className="absolute text-center">
+            <p className="text-xs uppercase tracking-wide text-gray-500">Stages</p>
+            <p className="text-2xl font-bold text-slate-900">{points.length}</p>
+          </div>
+        </div>
+        <div className="w-full space-y-2">
+          {points.map((point, index) => (
+            <div key={point.label} className="flex items-center justify-between rounded-2xl bg-gray-50 px-3 py-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 rounded-full ${colors[index % colors.length].replace("stroke", "bg")}`} />
+                <span className="capitalize text-gray-700">{point.label}</span>
+              </div>
+              <span className="font-semibold text-slate-900">{point.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistogramChart({
+  title,
+  subtitle,
+  points,
+}: {
+  title: string;
+  subtitle: string;
+  points: ChartPoint[];
+}) {
+  const maxValue = Math.max(...points.map((point) => Number(point.value || 0)), 1);
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-gray-500">{title}</p>
+          <p className="text-sm text-gray-500">{subtitle}</p>
+        </div>
+      </div>
+      <div className="flex h-52 items-end gap-3 rounded-[24px] border border-gray-100 bg-gradient-to-b from-white to-[#fbf7fa] p-4">
+        {points.map((point, index) => {
+          const height = Math.max(10, (Number(point.value || 0) / maxValue) * 100);
+          const tones = [
+            "from-[#7c3aed] to-[#4f46e5]",
+            "from-[#be185d] to-[#7c3aed]",
+            "from-[#0ea5e9] to-[#2563eb]",
+            "from-[#f59e0b] to-[#ea580c]",
+          ];
+          return (
+            <div key={point.label} className="flex flex-1 flex-col items-center justify-end gap-2">
+              <span className="text-xs font-semibold text-slate-700">{point.value}</span>
+              <div className="flex h-full w-full items-end rounded-2xl bg-gray-100 p-1.5">
+                <div
+                  className={`w-full rounded-xl bg-gradient-to-t ${tones[index % tones.length]} shadow-[0_10px_25px_rgba(79,70,229,0.18)]`}
+                  style={{ height: `${height}%` }}
+                />
+              </div>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-gray-500">{point.label}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

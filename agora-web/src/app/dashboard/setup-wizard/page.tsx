@@ -27,7 +27,6 @@ const STEP_ROUTE_MAP: Record<string, string> = {
   students: "/dashboard/students",
   fee_plans: "/dashboard/fees",
   grading_system: "/dashboard/exam-terms",
-  timetable: "/dashboard/timetable",
   role_assignment: "/dashboard/access-control",
   notification_settings: "/dashboard/notifications",
 };

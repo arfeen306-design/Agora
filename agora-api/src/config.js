@@ -258,6 +258,13 @@ const config = {
     tokenBudgetPerSchool: Number(process.env.AI_TOKEN_BUDGET_PER_SCHOOL || 500000),
     maxContextTokens: Number(process.env.AI_MAX_CONTEXT_TOKENS || 4096),
   },
+  timetableEngine: {
+    baseUrl: process.env.TIMETABLE_ENGINE_BASE_URL || "http://127.0.0.1:8000",
+    email: process.env.TIMETABLE_ENGINE_EMAIL || "admin@school.demo",
+    password: process.env.TIMETABLE_ENGINE_PASSWORD || "demo123",
+    timeoutMs: Number(process.env.TIMETABLE_ENGINE_TIMEOUT_MS || 30000),
+    projectPrefix: process.env.TIMETABLE_ENGINE_PROJECT_PREFIX || "Agora",
+  },
 };
 
 module.exports = config;

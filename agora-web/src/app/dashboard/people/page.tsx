@@ -514,7 +514,7 @@ export default function PeoplePage() {
                 Centralized profiles with role-aware setup, enrollment controls, and section ownership.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Link href="/dashboard/people/parents" className="inline-flex items-center rounded-lg border border-white/40 bg-white/15 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/25">
+                <Link href="/dashboard/people/parents" className="inline-flex items-center rounded-lg border border-white/40 bg-white/[0.15] px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/25">
                   Open Parent Directory
                 </Link>
               </div>
@@ -1017,7 +1017,7 @@ function Field({ label, children, required = false }: { label: string; children:
 
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl bg-white/15 backdrop-blur px-3 py-2 border border-white/20">
+    <div className="rounded-xl bg-white/[0.15] backdrop-blur px-3 py-2 border border-white/20">
       <p className="text-xs text-pink-100">{label}</p>
       <p className="text-lg font-semibold text-white">{value}</p>
     </div>

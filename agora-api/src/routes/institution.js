@@ -1528,6 +1528,458 @@ router.get(
       [req.auth.schoolId]
     );
 
+    const sectionCommandBlocksResult = await pool.query(
+      `
+        SELECT
+          ss.id AS section_id,
+          ss.name AS section_name,
+          ss.code AS section_code,
+          ss.section_type,
+          ss.head_user_id,
+          COALESCE(NULLIF(BTRIM(CONCAT(head.first_name, ' ', head.last_name)), ''), head.email) AS head_name,
+          ss.coordinator_user_id,
+          COALESCE(NULLIF(BTRIM(CONCAT(coord.first_name, ' ', coord.last_name)), ''), coord.email) AS coordinator_name,
+          (
+            SELECT COUNT(*)::int
+            FROM classrooms c
+            WHERE c.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND c.is_active = TRUE
+          ) AS class_count,
+          (
+            SELECT COUNT(*)::int
+            FROM student_enrollments se
+            JOIN classrooms c
+              ON c.id = se.classroom_id
+             AND c.school_id = se.school_id
+            WHERE se.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND se.status = 'active'
+          ) AS active_students,
+          (
+            SELECT COUNT(*)::int
+            FROM staff_profiles sp
+            WHERE sp.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sp.employment_status = 'active'
+          ) AS assigned_staff,
+          (
+            SELECT COUNT(DISTINCT ps.parent_id)::int
+            FROM parent_students ps
+            JOIN student_enrollments se
+              ON se.student_id = ps.student_id
+             AND se.school_id = ps.school_id
+            JOIN classrooms c
+              ON c.id = se.classroom_id
+             AND c.school_id = se.school_id
+            WHERE ps.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND se.status = 'active'
+          ) AS linked_parents,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+          ) AS student_total,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+              AND ar.status = 'present'
+          ) AS student_present_count,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+              AND ar.status = 'late'
+          ) AS student_late_count,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+              AND ar.status = 'absent'
+          ) AS student_absent_count,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+              AND ar.status = 'leave'
+          ) AS student_leave_count,
+          (
+            SELECT COUNT(sal.id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sal.attendance_date = CURRENT_DATE
+          ) AS staff_total,
+          (
+            SELECT COUNT(sal.id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'present'
+          ) AS staff_present_count,
+          (
+            SELECT COUNT(sal.id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'late'
+          ) AS staff_late_count,
+          (
+            SELECT COUNT(sal.id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'absent'
+          ) AS staff_absent_count,
+          (
+            SELECT COUNT(sal.id)::int
+            FROM staff_attendance_logs sal
+            JOIN staff_profiles sp
+              ON sp.id = sal.staff_profile_id
+             AND sp.school_id = sal.school_id
+            WHERE sal.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sal.attendance_date = CURRENT_DATE
+              AND sal.status = 'leave'
+          ) AS staff_leave_count,
+          (
+            SELECT COUNT(di.id)::int
+            FROM discipline_incidents di
+            WHERE di.school_id = ss.school_id
+              AND di.section_id = ss.id
+              AND di.status IN ('reported', 'under_review')
+              AND di.incident_date >= CURRENT_DATE - INTERVAL '30 days'
+          ) AS discipline_open_count,
+          (
+            SELECT COUNT(di.id)::int
+            FROM discipline_incidents di
+            WHERE di.school_id = ss.school_id
+              AND di.section_id = ss.id
+              AND di.status = 'escalated'
+              AND di.incident_date >= CURRENT_DATE - INTERVAL '30 days'
+          ) AS discipline_escalated_count,
+          (
+            SELECT COUNT(di.id)::int
+            FROM discipline_incidents di
+            WHERE di.school_id = ss.school_id
+              AND di.section_id = ss.id
+              AND di.severity = 'critical'
+              AND di.incident_date >= CURRENT_DATE - INTERVAL '30 days'
+          ) AS discipline_critical_count,
+          (
+            SELECT COUNT(e.id)::int
+            FROM events e
+            LEFT JOIN classrooms ec
+              ON ec.id = e.target_classroom_id
+             AND ec.school_id = e.school_id
+            WHERE e.school_id = ss.school_id
+              AND e.starts_at >= NOW()
+              AND e.starts_at <= NOW() + INTERVAL '14 days'
+              AND (
+                e.target_scope = 'school'
+                OR (e.target_scope = 'classroom' AND ec.section_id = ss.id)
+              )
+          ) AS upcoming_events_count,
+          (
+            SELECT COUNT(*)::int
+            FROM admission_applications aa
+            LEFT JOIN classrooms dc
+              ON dc.id = aa.desired_classroom_id
+             AND dc.school_id = aa.school_id
+            LEFT JOIN school_sections ds
+              ON ds.school_id = aa.school_id
+             AND dc.id IS NULL
+             AND aa.desired_section_label IS NOT NULL
+             AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+            WHERE aa.school_id = ss.school_id
+              AND COALESCE(dc.section_id, ds.id) = ss.id
+              AND aa.current_status = 'inquiry'
+          ) AS admission_inquiry_count,
+          (
+            SELECT COUNT(*)::int
+            FROM admission_applications aa
+            LEFT JOIN classrooms dc
+              ON dc.id = aa.desired_classroom_id
+             AND dc.school_id = aa.school_id
+            LEFT JOIN school_sections ds
+              ON ds.school_id = aa.school_id
+             AND dc.id IS NULL
+             AND aa.desired_section_label IS NOT NULL
+             AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+            WHERE aa.school_id = ss.school_id
+              AND COALESCE(dc.section_id, ds.id) = ss.id
+              AND aa.current_status = 'under_review'
+          ) AS admission_under_review_count,
+          (
+            SELECT COUNT(*)::int
+            FROM admission_applications aa
+            LEFT JOIN classrooms dc
+              ON dc.id = aa.desired_classroom_id
+             AND dc.school_id = aa.school_id
+            LEFT JOIN school_sections ds
+              ON ds.school_id = aa.school_id
+             AND dc.id IS NULL
+             AND aa.desired_section_label IS NOT NULL
+             AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+            WHERE aa.school_id = ss.school_id
+              AND COALESCE(dc.section_id, ds.id) = ss.id
+              AND aa.current_status = 'accepted'
+          ) AS admission_accepted_count,
+          (
+            SELECT COUNT(*)::int
+            FROM admission_applications aa
+            LEFT JOIN classrooms dc
+              ON dc.id = aa.desired_classroom_id
+             AND dc.school_id = aa.school_id
+            LEFT JOIN school_sections ds
+              ON ds.school_id = aa.school_id
+             AND dc.id IS NULL
+             AND aa.desired_section_label IS NOT NULL
+             AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+            WHERE aa.school_id = ss.school_id
+              AND COALESCE(dc.section_id, ds.id) = ss.id
+              AND aa.current_status = 'waitlisted'
+          ) AS admission_waitlisted_count,
+          (
+            SELECT COUNT(*)::int
+            FROM admission_applications aa
+            LEFT JOIN classrooms dc
+              ON dc.id = aa.desired_classroom_id
+             AND dc.school_id = aa.school_id
+            LEFT JOIN school_sections ds
+              ON ds.school_id = aa.school_id
+             AND dc.id IS NULL
+             AND aa.desired_section_label IS NOT NULL
+             AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+            WHERE aa.school_id = ss.school_id
+              AND COALESCE(dc.section_id, ds.id) = ss.id
+              AND aa.current_status = 'admitted'
+          ) AS admission_admitted_count,
+          (
+            SELECT COUNT(*)::int
+            FROM admission_applications aa
+            LEFT JOIN classrooms dc
+              ON dc.id = aa.desired_classroom_id
+             AND dc.school_id = aa.school_id
+            LEFT JOIN school_sections ds
+              ON ds.school_id = aa.school_id
+             AND dc.id IS NULL
+             AND aa.desired_section_label IS NOT NULL
+             AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+            WHERE aa.school_id = ss.school_id
+              AND COALESCE(dc.section_id, ds.id) = ss.id
+              AND aa.current_status = 'rejected'
+          ) AS admission_rejected_count,
+          (
+            SELECT COUNT(*)::int
+            FROM student_enrollments se
+            JOIN classrooms c
+              ON c.id = se.classroom_id
+             AND c.school_id = se.school_id
+            WHERE se.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND se.status <> 'active'
+          ) AS withdrawal_count,
+          (
+            SELECT COUNT(rc.id)::int
+            FROM report_cards rc
+            JOIN classrooms c
+              ON c.id = rc.classroom_id
+             AND c.school_id = rc.school_id
+            WHERE rc.school_id = ss.school_id
+              AND c.section_id = ss.id
+          ) AS result_total_cards,
+          (
+            SELECT COUNT(rc.id)::int
+            FROM report_cards rc
+            JOIN classrooms c
+              ON c.id = rc.classroom_id
+             AND c.school_id = rc.school_id
+            WHERE rc.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND rc.status = 'published'
+          ) AS result_published_cards,
+          (
+            SELECT COUNT(rc.id)::int
+            FROM report_cards rc
+            JOIN classrooms c
+              ON c.id = rc.classroom_id
+             AND c.school_id = rc.school_id
+            WHERE rc.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND rc.status = 'draft'
+          ) AS result_draft_cards,
+          (
+            SELECT ROUND(COALESCE(AVG(rc.percentage), 0)::numeric, 2)
+            FROM report_cards rc
+            JOIN classrooms c
+              ON c.id = rc.classroom_id
+             AND c.school_id = rc.school_id
+            WHERE rc.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND rc.status = 'published'
+          ) AS result_average_percentage,
+          (
+            SELECT et.name
+            FROM report_cards rc
+            JOIN classrooms c
+              ON c.id = rc.classroom_id
+             AND c.school_id = rc.school_id
+            JOIN exam_terms et
+              ON et.id = rc.exam_term_id
+             AND et.school_id = rc.school_id
+            WHERE rc.school_id = ss.school_id
+              AND c.section_id = ss.id
+            ORDER BY COALESCE(et.ends_on, et.starts_on, rc.published_at::date, rc.created_at::date) DESC NULLS LAST
+            LIMIT 1
+          ) AS result_term_name,
+          (
+            SELECT COUNT(te.id)::int
+            FROM timetable_entries te
+            JOIN classrooms c
+              ON c.id = te.classroom_id
+             AND c.school_id = te.school_id
+            WHERE te.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND te.is_active = TRUE
+          ) AS timetable_entries_count,
+          (
+            SELECT COUNT(DISTINCT te.classroom_id)::int
+            FROM timetable_entries te
+            JOIN classrooms c
+              ON c.id = te.classroom_id
+             AND c.school_id = te.school_id
+            WHERE te.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND te.is_active = TRUE
+          ) AS classrooms_with_timetable,
+          (
+            SELECT COUNT(tsb.id)::int
+            FROM timetable_substitutions tsb
+            JOIN timetable_entries te
+              ON te.id = tsb.timetable_entry_id
+             AND te.school_id = tsb.school_id
+            JOIN classrooms c
+              ON c.id = te.classroom_id
+             AND c.school_id = te.school_id
+            WHERE tsb.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND tsb.is_active = TRUE
+              AND tsb.substitution_date >= CURRENT_DATE - INTERVAL '7 days'
+          ) AS timetable_substitutions_this_week
+        FROM school_sections ss
+        LEFT JOIN users head
+          ON head.id = ss.head_user_id
+        LEFT JOIN users coord
+          ON coord.id = ss.coordinator_user_id
+        WHERE ss.school_id = $1
+          AND ss.is_active = TRUE
+        ORDER BY ss.display_order ASC, ss.name ASC
+      `,
+      [req.auth.schoolId]
+    );
+
+    const sectionIds = sectionCommandBlocksResult.rows.map((row) => row.section_id).filter(Boolean);
+    const staffPreviewResult =
+      sectionIds.length > 0
+        ? await pool.query(
+            `
+              SELECT
+                sp.primary_section_id AS section_id,
+                sp.id AS staff_profile_id,
+                sp.staff_code,
+                sp.staff_type,
+                sp.designation,
+                sp.department,
+                u.id AS user_id,
+                u.first_name,
+                u.last_name,
+                u.email,
+                COALESCE(sal.status, 'unmarked') AS attendance_status
+              FROM staff_profiles sp
+              JOIN users u
+                ON u.id = sp.user_id
+              LEFT JOIN staff_attendance_logs sal
+                ON sal.school_id = sp.school_id
+               AND sal.staff_profile_id = sp.id
+               AND sal.attendance_date = CURRENT_DATE
+              WHERE sp.school_id = $1
+                AND sp.primary_section_id = ANY($2::uuid[])
+                AND sp.employment_status = 'active'
+              ORDER BY
+                sp.primary_section_id ASC,
+                CASE sp.staff_type
+                  WHEN 'headmistress' THEN 0
+                  WHEN 'teacher' THEN 1
+                  ELSE 2
+                END ASC,
+                COALESCE(sp.designation, '') ASC,
+                u.first_name ASC
+            `,
+            [req.auth.schoolId, sectionIds]
+          )
+        : { rows: [] };
+
+    const staffPreviewMap = new Map();
+    for (const row of staffPreviewResult.rows) {
+      if (!staffPreviewMap.has(row.section_id)) staffPreviewMap.set(row.section_id, []);
+      if (staffPreviewMap.get(row.section_id).length < 5) {
+        staffPreviewMap.get(row.section_id).push({
+          staff_profile_id: row.staff_profile_id,
+          user_id: row.user_id,
+          staff_code: row.staff_code,
+          staff_type: row.staff_type,
+          designation: row.designation,
+          department: row.department,
+          name: [row.first_name, row.last_name].filter(Boolean).join(" ").trim() || row.email,
+          email: row.email,
+          attendance_status: row.attendance_status,
+        });
+      }
+    }
+
     const summary = {
       attendance_today: attendanceSummary.rows[0] || {
         total: 0,
@@ -1548,6 +2000,66 @@ router.get(
         upcoming_events: 0,
         active_delegations: 0,
       },
+      section_command_blocks: sectionCommandBlocksResult.rows.map((row) => ({
+        section_id: row.section_id,
+        section_name: row.section_name,
+        section_code: row.section_code,
+        section_type: row.section_type,
+        head_user_id: row.head_user_id,
+        head_name: row.head_name,
+        coordinator_user_id: row.coordinator_user_id,
+        coordinator_name: row.coordinator_name,
+        class_count: Number(row.class_count) || 0,
+        active_students: Number(row.active_students) || 0,
+        assigned_staff: Number(row.assigned_staff) || 0,
+        linked_parents: Number(row.linked_parents) || 0,
+        student_attendance_today: {
+          total: Number(row.student_total) || 0,
+          present_count: Number(row.student_present_count) || 0,
+          late_count: Number(row.student_late_count) || 0,
+          absent_count: Number(row.student_absent_count) || 0,
+          leave_count: Number(row.student_leave_count) || 0,
+        },
+        staff_attendance_today: {
+          total: Number(row.staff_total) || 0,
+          present_count: Number(row.staff_present_count) || 0,
+          late_count: Number(row.staff_late_count) || 0,
+          absent_count: Number(row.staff_absent_count) || 0,
+          leave_count: Number(row.staff_leave_count) || 0,
+        },
+        discipline: {
+          open_count: Number(row.discipline_open_count) || 0,
+          escalated_count: Number(row.discipline_escalated_count) || 0,
+          critical_count: Number(row.discipline_critical_count) || 0,
+        },
+        events: {
+          upcoming_count: Number(row.upcoming_events_count) || 0,
+        },
+        admissions: {
+          inquiry_count: Number(row.admission_inquiry_count) || 0,
+          under_review_count: Number(row.admission_under_review_count) || 0,
+          accepted_count: Number(row.admission_accepted_count) || 0,
+          waitlisted_count: Number(row.admission_waitlisted_count) || 0,
+          admitted_count: Number(row.admission_admitted_count) || 0,
+          rejected_count: Number(row.admission_rejected_count) || 0,
+        },
+        withdrawals: {
+          count: Number(row.withdrawal_count) || 0,
+        },
+        results: {
+          total_cards: Number(row.result_total_cards) || 0,
+          published_cards: Number(row.result_published_cards) || 0,
+          draft_cards: Number(row.result_draft_cards) || 0,
+          average_percentage: Number(row.result_average_percentage) || 0,
+          latest_term_name: row.result_term_name || null,
+        },
+        timetable: {
+          entries_count: Number(row.timetable_entries_count) || 0,
+          classrooms_with_timetable: Number(row.classrooms_with_timetable) || 0,
+          substitutions_this_week: Number(row.timetable_substitutions_this_week) || 0,
+        },
+        staff_preview: staffPreviewMap.get(row.section_id) || [],
+      })),
       generated_at: new Date().toISOString(),
     };
 
@@ -1592,33 +2104,87 @@ router.get(
           ss.name AS section_name,
           ss.code AS section_code,
           ss.section_type,
-          COUNT(DISTINCT c.id)::int AS class_count,
-          COUNT(DISTINCT se.student_id)::int AS active_students,
-          COUNT(DISTINCT sp.id)::int AS assigned_staff,
-          COUNT(ar.id)::int AS attendance_records_today,
-          COUNT(ar.id) FILTER (WHERE ar.status = 'late')::int AS late_today,
-          COUNT(ar.id) FILTER (WHERE ar.status = 'absent')::int AS absent_today
+          ss.head_user_id,
+          COALESCE(NULLIF(BTRIM(CONCAT(head.first_name, ' ', head.last_name)), ''), head.email) AS head_name,
+          ss.coordinator_user_id,
+          COALESCE(NULLIF(BTRIM(CONCAT(coord.first_name, ' ', coord.last_name)), ''), coord.email) AS coordinator_name,
+          (
+            SELECT COUNT(*)::int
+            FROM classrooms c
+            WHERE c.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND c.is_active = TRUE
+          ) AS class_count,
+          (
+            SELECT COUNT(*)::int
+            FROM student_enrollments se
+            JOIN classrooms c
+              ON c.id = se.classroom_id
+             AND c.school_id = se.school_id
+            WHERE se.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND se.status = 'active'
+          ) AS active_students,
+          (
+            SELECT COUNT(*)::int
+            FROM staff_profiles sp
+            WHERE sp.school_id = ss.school_id
+              AND sp.primary_section_id = ss.id
+              AND sp.employment_status = 'active'
+          ) AS assigned_staff,
+          (
+            SELECT COUNT(DISTINCT ps.parent_id)::int
+            FROM parent_students ps
+            JOIN student_enrollments se
+              ON se.student_id = ps.student_id
+             AND se.school_id = ps.school_id
+            JOIN classrooms c
+              ON c.id = se.classroom_id
+             AND c.school_id = se.school_id
+            WHERE ps.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND se.status = 'active'
+          ) AS linked_parents,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+          ) AS attendance_records_today,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+              AND ar.status = 'late'
+          ) AS late_today,
+          (
+            SELECT COUNT(ar.id)::int
+            FROM attendance_records ar
+            JOIN classrooms c
+              ON c.id = ar.classroom_id
+             AND c.school_id = ar.school_id
+            WHERE ar.school_id = ss.school_id
+              AND c.section_id = ss.id
+              AND ar.attendance_date = CURRENT_DATE
+              AND ar.status = 'absent'
+          ) AS absent_today
         FROM school_sections ss
-        LEFT JOIN classrooms c
-          ON c.school_id = ss.school_id
-         AND c.section_id = ss.id
-         AND c.is_active = TRUE
-        LEFT JOIN student_enrollments se
-          ON se.school_id = ss.school_id
-         AND se.classroom_id = c.id
-         AND se.status = 'active'
-        LEFT JOIN staff_profiles sp
-          ON sp.school_id = ss.school_id
-         AND sp.primary_section_id = ss.id
-         AND sp.employment_status = 'active'
-        LEFT JOIN attendance_records ar
-          ON ar.school_id = ss.school_id
-         AND ar.classroom_id = c.id
-         AND ar.attendance_date = CURRENT_DATE
+        LEFT JOIN users head
+          ON head.id = ss.head_user_id
+        LEFT JOIN users coord
+          ON coord.id = ss.coordinator_user_id
         WHERE ss.school_id = $1
           AND ss.is_active = TRUE
           ${scopeFilter}
-        GROUP BY ss.id, ss.name, ss.code, ss.section_type, ss.display_order
         ORDER BY ss.display_order ASC, ss.name ASC
       `,
       params
@@ -1639,7 +2205,22 @@ router.get(
       const selectedSectionRow =
         sections.find((row) => row.section_id === selectedSectionId) || null;
 
-      const [classAttendanceResult, teacherCompletionResult, lateAbsentResult, eventsResult, announcementsResult] =
+      const [
+        classAttendanceResult,
+        teacherCompletionResult,
+        lateAbsentResult,
+        eventsResult,
+        announcementsResult,
+        staffRosterResult,
+        staffAttendanceSummaryResult,
+        parentAccessResult,
+        resultsByTermResult,
+        admissionsSummaryResult,
+        admissionRecordsResult,
+        timetableSummaryResult,
+        timetablePreviewResult,
+        movementSummaryResult,
+      ] =
         await Promise.all([
           pool.query(
             `
@@ -1648,12 +2229,26 @@ router.get(
                 c.grade_label,
                 c.section_label,
                 c.classroom_code,
+                c.room_number,
+                COALESCE(NULLIF(BTRIM(CONCAT(hu.first_name, ' ', hu.last_name)), ''), hu.email) AS homeroom_teacher_name,
+                (
+                  SELECT COUNT(*)::int
+                  FROM student_enrollments se
+                  WHERE se.school_id = c.school_id
+                    AND se.classroom_id = c.id
+                    AND se.status = 'active'
+                ) AS active_students,
                 COUNT(ar.id)::int AS attendance_records_today,
                 COUNT(ar.id) FILTER (WHERE ar.status = 'present')::int AS present_count,
                 COUNT(ar.id) FILTER (WHERE ar.status = 'late')::int AS late_count,
                 COUNT(ar.id) FILTER (WHERE ar.status = 'absent')::int AS absent_count,
                 COUNT(ar.id) FILTER (WHERE ar.status = 'leave')::int AS leave_count
               FROM classrooms c
+              LEFT JOIN teachers ht
+                ON ht.id = c.homeroom_teacher_id
+               AND ht.school_id = c.school_id
+              LEFT JOIN users hu
+                ON hu.id = ht.user_id
               LEFT JOIN attendance_records ar
                 ON ar.school_id = c.school_id
                AND ar.classroom_id = c.id
@@ -1661,7 +2256,7 @@ router.get(
               WHERE c.school_id = $1
                 AND c.section_id = $2
                 AND c.is_active = TRUE
-              GROUP BY c.id, c.grade_label, c.section_label, c.classroom_code
+              GROUP BY c.id, c.grade_label, c.section_label, c.classroom_code, c.room_number, homeroom_teacher_name
               ORDER BY c.grade_label ASC, c.section_label ASC
             `,
             [req.auth.schoolId, selectedSectionId]
@@ -1833,6 +2428,255 @@ router.get(
             `,
             [req.auth.schoolId, selectedSectionId]
           ),
+          pool.query(
+            `
+              SELECT
+                sp.id AS staff_profile_id,
+                sp.user_id,
+                sp.staff_code,
+                sp.staff_type,
+                sp.designation,
+                sp.department,
+                sp.employment_status,
+                u.first_name,
+                u.last_name,
+                u.email,
+                COALESCE(sal.status, 'unmarked') AS attendance_status,
+                sal.check_in_at,
+                sal.check_out_at
+              FROM staff_profiles sp
+              JOIN users u
+                ON u.id = sp.user_id
+              LEFT JOIN staff_attendance_logs sal
+                ON sal.school_id = sp.school_id
+               AND sal.staff_profile_id = sp.id
+               AND sal.attendance_date = CURRENT_DATE
+              WHERE sp.school_id = $1
+                AND sp.primary_section_id = $2
+                AND sp.employment_status = 'active'
+              ORDER BY
+                CASE sp.staff_type
+                  WHEN 'headmistress' THEN 0
+                  WHEN 'teacher' THEN 1
+                  ELSE 2
+                END ASC,
+                COALESCE(sp.designation, '') ASC,
+                u.first_name ASC
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                COUNT(sal.id)::int AS total,
+                COUNT(sal.id) FILTER (WHERE sal.status = 'present')::int AS present_count,
+                COUNT(sal.id) FILTER (WHERE sal.status = 'late')::int AS late_count,
+                COUNT(sal.id) FILTER (WHERE sal.status = 'absent')::int AS absent_count,
+                COUNT(sal.id) FILTER (WHERE sal.status = 'leave')::int AS leave_count
+              FROM staff_attendance_logs sal
+              JOIN staff_profiles sp
+                ON sp.id = sal.staff_profile_id
+               AND sp.school_id = sal.school_id
+              WHERE sal.school_id = $1
+                AND sp.primary_section_id = $2
+                AND sal.attendance_date = CURRENT_DATE
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                (
+                  SELECT COUNT(*)::int
+                  FROM student_enrollments se
+                  JOIN classrooms c
+                    ON c.id = se.classroom_id
+                   AND c.school_id = se.school_id
+                  WHERE se.school_id = $1
+                    AND c.section_id = $2
+                    AND se.status = 'active'
+                ) AS active_students,
+                (
+                  SELECT COUNT(DISTINCT ps.parent_id)::int
+                  FROM parent_students ps
+                  JOIN student_enrollments se
+                    ON se.student_id = ps.student_id
+                   AND se.school_id = ps.school_id
+                  JOIN classrooms c
+                    ON c.id = se.classroom_id
+                   AND c.school_id = se.school_id
+                  WHERE ps.school_id = $1
+                    AND c.section_id = $2
+                    AND se.status = 'active'
+                ) AS linked_parents
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                et.id AS exam_term_id,
+                et.name AS term_name,
+                et.term_type,
+                et.starts_on,
+                et.ends_on,
+                COUNT(rc.id)::int AS total_report_cards,
+                COUNT(rc.id) FILTER (WHERE rc.status = 'published')::int AS published_report_cards,
+                COUNT(rc.id) FILTER (WHERE rc.status = 'draft')::int AS draft_report_cards,
+                ROUND(COALESCE(AVG(rc.percentage) FILTER (WHERE rc.status = 'published'), 0)::numeric, 2) AS average_percentage
+              FROM exam_terms et
+              JOIN classrooms c
+                ON c.school_id = et.school_id
+               AND c.academic_year_id = et.academic_year_id
+               AND c.section_id = $2
+               AND c.is_active = TRUE
+              LEFT JOIN report_cards rc
+                ON rc.school_id = et.school_id
+               AND rc.exam_term_id = et.id
+               AND rc.classroom_id = c.id
+              WHERE et.school_id = $1
+              GROUP BY et.id, et.name, et.term_type, et.starts_on, et.ends_on, et.created_at
+              ORDER BY COALESCE(et.ends_on, et.starts_on) DESC NULLS LAST, et.created_at DESC
+              LIMIT 6
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                aa.id,
+                aa.student_id,
+                st.student_code,
+                st.first_name,
+                st.last_name,
+                aa.guardian_name,
+                aa.guardian_phone,
+                aa.current_status,
+                aa.created_at,
+                aa.desired_grade_label,
+                aa.desired_section_label,
+                dc.grade_label AS desired_grade_actual,
+                dc.section_label AS desired_section_actual
+              FROM admission_applications aa
+              JOIN students st
+                ON st.id = aa.student_id
+               AND st.school_id = aa.school_id
+              LEFT JOIN classrooms dc
+                ON dc.id = aa.desired_classroom_id
+               AND dc.school_id = aa.school_id
+              LEFT JOIN school_sections ds
+                ON ds.school_id = aa.school_id
+               AND dc.id IS NULL
+               AND aa.desired_section_label IS NOT NULL
+               AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+              WHERE aa.school_id = $1
+                AND COALESCE(dc.section_id, ds.id) = $2
+              ORDER BY aa.created_at DESC
+              LIMIT 8
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                COUNT(*) FILTER (WHERE aa.current_status = 'inquiry')::int AS inquiry_count,
+                COUNT(*) FILTER (WHERE aa.current_status = 'applied')::int AS applied_count,
+                COUNT(*) FILTER (WHERE aa.current_status = 'under_review')::int AS under_review_count,
+                COUNT(*) FILTER (WHERE aa.current_status = 'accepted')::int AS accepted_count,
+                COUNT(*) FILTER (WHERE aa.current_status = 'waitlisted')::int AS waitlisted_count,
+                COUNT(*) FILTER (WHERE aa.current_status = 'admitted')::int AS admitted_count,
+                COUNT(*) FILTER (WHERE aa.current_status = 'rejected')::int AS rejected_count
+              FROM admission_applications aa
+              LEFT JOIN classrooms dc
+                ON dc.id = aa.desired_classroom_id
+               AND dc.school_id = aa.school_id
+              LEFT JOIN school_sections ds
+                ON ds.school_id = aa.school_id
+               AND dc.id IS NULL
+               AND aa.desired_section_label IS NOT NULL
+               AND LOWER(aa.desired_section_label) IN (LOWER(ds.name), LOWER(ds.code))
+              WHERE aa.school_id = $1
+                AND COALESCE(dc.section_id, ds.id) = $2
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                COUNT(te.id)::int AS entries_count,
+                COUNT(DISTINCT te.classroom_id)::int AS classrooms_with_timetable,
+                COUNT(tsb.id) FILTER (
+                  WHERE tsb.is_active = TRUE
+                    AND tsb.substitution_date >= CURRENT_DATE - INTERVAL '7 days'
+                )::int AS substitutions_this_week
+              FROM timetable_entries te
+              JOIN classrooms c
+                ON c.id = te.classroom_id
+               AND c.school_id = te.school_id
+              LEFT JOIN timetable_substitutions tsb
+                ON tsb.school_id = te.school_id
+               AND tsb.timetable_entry_id = te.id
+              WHERE te.school_id = $1
+                AND c.section_id = $2
+                AND te.is_active = TRUE
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                te.id AS timetable_entry_id,
+                c.id AS classroom_id,
+                c.grade_label,
+                c.section_label,
+                s.name AS subject_name,
+                COALESCE(NULLIF(BTRIM(CONCAT(tu.first_name, ' ', tu.last_name)), ''), tu.email) AS teacher_name,
+                tp.label AS period_label,
+                tp.period_number,
+                ts.day_of_week,
+                te.room_number
+              FROM timetable_entries te
+              JOIN classrooms c
+                ON c.id = te.classroom_id
+               AND c.school_id = te.school_id
+              JOIN timetable_slots ts
+                ON ts.id = te.slot_id
+               AND ts.school_id = te.school_id
+              JOIN timetable_periods tp
+                ON tp.id = ts.period_id
+               AND tp.school_id = ts.school_id
+              LEFT JOIN subjects s
+                ON s.id = te.subject_id
+               AND s.school_id = te.school_id
+              LEFT JOIN teachers tt
+                ON tt.id = te.teacher_id
+               AND tt.school_id = te.school_id
+              LEFT JOIN users tu
+                ON tu.id = tt.user_id
+              WHERE te.school_id = $1
+                AND c.section_id = $2
+                AND te.is_active = TRUE
+              ORDER BY ts.day_of_week ASC, tp.period_number ASC, c.grade_label ASC, c.section_label ASC
+              LIMIT 12
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
+          pool.query(
+            `
+              SELECT
+                COUNT(*) FILTER (WHERE se.status <> 'active')::int AS inactive_enrollments,
+                COUNT(*) FILTER (WHERE se.status = 'transferred')::int AS transferred_students,
+                COUNT(*) FILTER (WHERE se.status = 'promoted')::int AS promoted_students,
+                COUNT(*) FILTER (WHERE se.status = 'withdrawn')::int AS withdrawn_students
+              FROM student_enrollments se
+              JOIN classrooms c
+                ON c.id = se.classroom_id
+               AND c.school_id = se.school_id
+              WHERE se.school_id = $1
+                AND c.section_id = $2
+            `,
+            [req.auth.schoolId, selectedSectionId]
+          ),
         ]);
 
       const classAttendance = classAttendanceResult.rows.map((row) => {
@@ -1843,6 +2687,9 @@ router.get(
           classroom_id: row.classroom_id,
           classroom_label: `${row.grade_label} - ${row.section_label}`,
           classroom_code: row.classroom_code,
+          room_number: row.room_number,
+          homeroom_teacher_name: row.homeroom_teacher_name,
+          active_students: Number(row.active_students) || 0,
           attendance_records_today: total,
           present_count: present,
           late_count: Number(row.late_count) || 0,
@@ -1853,8 +2700,38 @@ router.get(
       });
 
       const completionRow = teacherCompletionResult.rows[0] || {};
+      const staffAttendanceSummary = staffAttendanceSummaryResult.rows[0] || {};
+      const parentAccess = parentAccessResult.rows[0] || {};
+      const admissionsSummary = admissionsSummaryResult.rows[0] || {};
+      const timetableSummary = timetableSummaryResult.rows[0] || {};
+      const movementSummary = movementSummaryResult.rows[0] || {};
+      const studentAttendanceSummary = {
+        total: classAttendance.reduce((sum, row) => sum + (row.attendance_records_today || 0), 0),
+        present_count: classAttendance.reduce((sum, row) => sum + (row.present_count || 0), 0),
+        late_count: classAttendance.reduce((sum, row) => sum + (row.late_count || 0), 0),
+        absent_count: classAttendance.reduce((sum, row) => sum + (row.absent_count || 0), 0),
+        leave_count: classAttendance.reduce((sum, row) => sum + (row.leave_count || 0), 0),
+      };
       selectedSectionDetail = {
         section: selectedSectionRow,
+        leadership: {
+          head_user_id: selectedSectionRow?.head_user_id || null,
+          head_name: selectedSectionRow?.head_name || null,
+          coordinator_user_id: selectedSectionRow?.coordinator_user_id || null,
+          coordinator_name: selectedSectionRow?.coordinator_name || null,
+        },
+        parent_access_summary: {
+          active_students: Number(parentAccess.active_students) || 0,
+          linked_parents: Number(parentAccess.linked_parents) || 0,
+        },
+        student_attendance_today: studentAttendanceSummary,
+        staff_attendance_today: {
+          total: Number(staffAttendanceSummary.total) || 0,
+          present_count: Number(staffAttendanceSummary.present_count) || 0,
+          late_count: Number(staffAttendanceSummary.late_count) || 0,
+          absent_count: Number(staffAttendanceSummary.absent_count) || 0,
+          leave_count: Number(staffAttendanceSummary.leave_count) || 0,
+        },
         class_attendance: classAttendance,
         teacher_completion: {
           assigned_staff: Number(completionRow.assigned_staff) || 0,
@@ -1864,6 +2741,21 @@ router.get(
           marks_assessments_count: Number(completionRow.marks_assessments_count) || 0,
           marks_scores_count: Number(completionRow.marks_scores_count) || 0,
         },
+        staff_profiles: staffRosterResult.rows.map((row) => ({
+          staff_profile_id: row.staff_profile_id,
+          user_id: row.user_id,
+          staff_code: row.staff_code,
+          staff_type: row.staff_type,
+          designation: row.designation,
+          department: row.department,
+          employment_status: row.employment_status,
+          first_name: row.first_name,
+          last_name: row.last_name,
+          email: row.email,
+          attendance_status: row.attendance_status,
+          check_in_at: row.check_in_at,
+          check_out_at: row.check_out_at,
+        })),
         late_absent_students: lateAbsentResult.rows.map((row) => ({
           attendance_record_id: row.attendance_record_id,
           student_id: row.student_id,
@@ -1902,6 +2794,60 @@ router.get(
               ? `${row.grade_label} - ${row.section_label}`
               : null,
         })),
+        result_progress_by_term: resultsByTermResult.rows.map((row) => ({
+          exam_term_id: row.exam_term_id,
+          term_name: row.term_name,
+          term_type: row.term_type,
+          starts_on: row.starts_on,
+          ends_on: row.ends_on,
+          total_report_cards: Number(row.total_report_cards) || 0,
+          published_report_cards: Number(row.published_report_cards) || 0,
+          draft_report_cards: Number(row.draft_report_cards) || 0,
+          average_percentage: Number(row.average_percentage) || 0,
+        })),
+        admissions_summary: {
+          inquiry_count: Number(admissionsSummary.inquiry_count) || 0,
+          applied_count: Number(admissionsSummary.applied_count) || 0,
+          under_review_count: Number(admissionsSummary.under_review_count) || 0,
+          accepted_count: Number(admissionsSummary.accepted_count) || 0,
+          waitlisted_count: Number(admissionsSummary.waitlisted_count) || 0,
+          admitted_count: Number(admissionsSummary.admitted_count) || 0,
+          rejected_count: Number(admissionsSummary.rejected_count) || 0,
+        },
+        admission_records: admissionRecordsResult.rows.map((row) => ({
+          id: row.id,
+          student_id: row.student_id,
+          student_code: row.student_code,
+          student_name: [row.first_name, row.last_name].filter(Boolean).join(" ").trim(),
+          guardian_name: row.guardian_name,
+          guardian_phone: row.guardian_phone,
+          current_status: row.current_status,
+          created_at: row.created_at,
+          desired_grade_label: row.desired_grade_actual || row.desired_grade_label || null,
+          desired_section_label: row.desired_section_actual || row.desired_section_label || null,
+        })),
+        timetable_summary: {
+          entries_count: Number(timetableSummary.entries_count) || 0,
+          classrooms_with_timetable: Number(timetableSummary.classrooms_with_timetable) || 0,
+          substitutions_this_week: Number(timetableSummary.substitutions_this_week) || 0,
+        },
+        timetable_preview: timetablePreviewResult.rows.map((row) => ({
+          timetable_entry_id: row.timetable_entry_id,
+          classroom_id: row.classroom_id,
+          classroom_label: `${row.grade_label} - ${row.section_label}`,
+          subject_name: row.subject_name,
+          teacher_name: row.teacher_name,
+          day_of_week: Number(row.day_of_week) || 0,
+          period_label: row.period_label,
+          period_number: Number(row.period_number) || 0,
+          room_number: row.room_number,
+        })),
+        movement_summary: {
+          inactive_enrollments: Number(movementSummary.inactive_enrollments) || 0,
+          transferred_students: Number(movementSummary.transferred_students) || 0,
+          promoted_students: Number(movementSummary.promoted_students) || 0,
+          withdrawn_students: Number(movementSummary.withdrawn_students) || 0,
+        },
       };
     }
 

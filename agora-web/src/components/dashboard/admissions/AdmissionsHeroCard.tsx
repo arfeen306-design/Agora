@@ -29,7 +29,7 @@ export default function AdmissionsHeroCard({
             Track inquiry flow, stage transitions, and admissions conversion in one place.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3 rounded-xl border border-white/25 bg-white/15 p-4 text-sm backdrop-blur">
+        <div className="grid grid-cols-2 gap-3 rounded-xl border border-white/25 bg-white/[0.15] p-4 text-sm backdrop-blur">
           <Metric label="Active Pipeline" value={activeCount} />
           <Metric label="Total Records" value={totalCount} />
           <Metric label="Admitted" value={admittedCount} />

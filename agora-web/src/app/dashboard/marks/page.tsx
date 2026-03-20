@@ -358,7 +358,7 @@ export default function MarksPage() {
   return (
     <>
       <Header title="Marks & Assessments" />
-      <div className="p-6">
+      <div className={`p-6 ${isFamilyViewer ? "family-workspace" : ""}`}>
         {message && (
           <div className={`mb-4 rounded-lg p-3 text-sm ${message.includes("success") || message.includes("created") || message.includes("submitted") ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
             {message}
@@ -371,7 +371,7 @@ export default function MarksPage() {
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-white/80">Marks & Test History</p>
                 <h2 className="mt-2 text-3xl font-bold">Child Assessment Feed</h2>
-                <p className="mt-2 text-sm text-white/85">
+                <p className="mt-2 text-sm text-white/[0.85]">
                   Families can review published assessments and test history here. Detailed score sheets appear once school marks are published.
                 </p>
                 {familySelectedStudent && linkedStudentClassroom(familySelectedStudent) && (

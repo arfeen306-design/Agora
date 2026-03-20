@@ -89,6 +89,80 @@ describe("Principal dashboard access", () => {
           upcoming_events: 2,
           active_delegations: 1,
         },
+        section_command_blocks: [
+          {
+            section_id: "section-1",
+            section_name: "Middle School",
+            section_code: "MID",
+            section_type: "middle",
+            head_user_id: "hm-1",
+            head_name: "Nadia HM",
+            coordinator_user_id: null,
+            coordinator_name: null,
+            class_count: 4,
+            active_students: 120,
+            assigned_staff: 12,
+            linked_parents: 110,
+            student_attendance_today: {
+              total: 120,
+              present_count: 108,
+              late_count: 7,
+              absent_count: 5,
+              leave_count: 0,
+            },
+            staff_attendance_today: {
+              total: 12,
+              present_count: 11,
+              late_count: 1,
+              absent_count: 0,
+              leave_count: 0,
+            },
+            discipline: {
+              open_count: 2,
+              escalated_count: 1,
+              critical_count: 0,
+            },
+            events: {
+              upcoming_count: 2,
+            },
+            admissions: {
+              inquiry_count: 3,
+              under_review_count: 2,
+              accepted_count: 1,
+              waitlisted_count: 0,
+              admitted_count: 0,
+              rejected_count: 0,
+            },
+            withdrawals: {
+              count: 1,
+            },
+            results: {
+              total_cards: 120,
+              published_cards: 96,
+              draft_cards: 24,
+              average_percentage: 81.4,
+              latest_term_name: "Midterm",
+            },
+            timetable: {
+              entries_count: 32,
+              classrooms_with_timetable: 4,
+              substitutions_this_week: 1,
+            },
+            staff_preview: [
+              {
+                staff_profile_id: "staff-1",
+                user_id: "user-1",
+                staff_code: "STF-1",
+                staff_type: "teacher",
+                designation: "Mathematics Teacher",
+                department: "Academics",
+                name: "Areeba Khan",
+                email: "teacher@agora.com",
+                attendance_status: "present",
+              },
+            ],
+          },
+        ],
         generated_at: "2026-03-08T00:00:00.000Z",
       },
     });
@@ -112,6 +186,8 @@ describe("Principal dashboard access", () => {
     await waitFor(() => {
       expect(mockGetPrincipalDashboard).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByText(/Welcome back, Areeba/i)).toBeInTheDocument();
+    expect(screen.getByText(/Leadership Command Center/i)).toBeInTheDocument();
+    expect(screen.getByText(/Section command blocks/i)).toBeInTheDocument();
+    expect(screen.getByText(/Middle School/i)).toBeInTheDocument();
   });
 });

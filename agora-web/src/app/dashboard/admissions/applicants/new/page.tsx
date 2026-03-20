@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import Header from "@/components/Header";
 import { useAuth } from "@/lib/auth";
@@ -10,10 +10,11 @@ import {
   createAdmissionInquiry,
   getLookupAcademicYears,
   getLookupClassrooms,
+  getLookupSections,
 } from "@/lib/api";
 
 const ADMISSIONS_CREATE_ROLES = ["school_admin", "front_desk"];
-const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
+const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk", "headmistress"];
 
 function hasRole(roles: string[] = [], allowed: string[]) {
   return allowed.some((role) => roles.includes(role));
@@ -28,6 +29,7 @@ function messageFromError(err: unknown, fallback: string) {
 export default function NewApplicantPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const roles = user?.roles || [];
   const canView = hasRole(roles, ADMISSIONS_VIEW_ROLES);
   const canCreate = hasRole(roles, ADMISSIONS_CREATE_ROLES);
@@ -62,18 +64,27 @@ export default function NewApplicantPage() {
     async function loadLookups() {
       setLoadingLookups(true);
       try {
-        const [classroomRows, yearRows] = await Promise.all([
-          getLookupClassrooms({ page_size: 200 }),
+        const [classroomRows, yearRows, sectionRows] = await Promise.all([
+          getLookupClassrooms({ page_size: 100 }),
           getLookupAcademicYears({ page_size: 100 }),
+          getLookupSections({ page_size: 100 }),
         ]);
         if (cancelled) return;
         setClassrooms(classroomRows.map((row) => ({ id: row.id, label: row.label })));
         setAcademicYears(yearRows.map((row) => ({ id: row.id, label: row.label, is_current: row.is_current })));
 
         const currentYear = yearRows.find((row) => row.is_current);
-        if (currentYear && !form.desired_academic_year_id) {
-          setForm((prev) => ({ ...prev, desired_academic_year_id: currentYear.id }));
-        }
+        const sectionIdFromUrl = searchParams.get("section_id") || "";
+        const academicYearFromUrl = searchParams.get("academic_year_id") || "";
+        const matchedSection = sectionRows.find((row) => row.id === sectionIdFromUrl);
+
+        setForm((prev) => ({
+          ...prev,
+          desired_academic_year_id:
+            prev.desired_academic_year_id || academicYearFromUrl || currentYear?.id || "",
+          desired_section_label:
+            prev.desired_section_label || matchedSection?.name || searchParams.get("section_name") || "",
+        }));
       } catch {
         if (cancelled) return;
         setClassrooms([]);
@@ -86,7 +97,7 @@ export default function NewApplicantPage() {
     return () => {
       cancelled = true;
     };
-  }, [canView, form.desired_academic_year_id]);
+  }, [canView, form.desired_academic_year_id, searchParams]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();

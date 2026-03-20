@@ -9,11 +9,14 @@ const { fireAndForgetAuditLog } = require("../utils/audit-log");
 const { success } = require("../utils/http");
 const { ensureTeacherProjectionForUser } = require("../utils/teacher-projection");
 const { getTeacherIdentityByUser, listTeacherClassroomIds } = require("../utils/teacher-scope");
+const { runTimetableEngineIntegration } = require("../services/timetable-engine-integration");
+const { ensureBoard } = require("../services/classroom-manual-timetable");
 
 const router = express.Router();
 
 const VIEW_ROLES = ["school_admin", "principal", "vice_principal", "headmistress", "teacher"];
 const MANAGE_ROLES = ["school_admin", "principal", "vice_principal", "headmistress"];
+const MANUAL_BOARD_VIEW_ROLES = [...VIEW_ROLES, "parent", "student"];
 
 const DAY_NAME_MAP = {
   1: "Monday",
@@ -69,6 +72,14 @@ const generateSlotsSchema = z.object({
     .min(1)
     .max(7)
     .default([1, 2, 3, 4, 5]),
+});
+
+const generateViaEngineSchema = z.object({
+  academic_year_id: z.string().uuid().optional(),
+});
+
+const wizardSnapshotQuerySchema = z.object({
+  academic_year_id: z.string().uuid().optional(),
 });
 
 const listSlotsQuerySchema = z.object({
@@ -221,6 +232,44 @@ function isoWeekdayFromDate(isoDate) {
 
 function dayLabel(dayOfWeek) {
   return DAY_NAME_MAP[dayOfWeek] || "Unknown";
+}
+
+const WIZARD_COLOR_PALETTE = [
+  '#ef4444',
+  '#a855f7',
+  '#10b981',
+  '#f97316',
+  '#0ea5e9',
+  '#14b8a6',
+  '#f59e0b',
+  '#22c55e',
+  '#06b6d4',
+  '#84a29f',
+];
+
+function pickWizardColor(index) {
+  return WIZARD_COLOR_PALETTE[index % WIZARD_COLOR_PALETTE.length];
+}
+
+function inferSubjectCategory(subjectName = '') {
+  const value = subjectName.toLowerCase();
+  if (value.includes('physical') || value.includes('sports') || value === 'pe') return 'Activity';
+  if (value.includes('business') || value.includes('computer')) return 'Elective';
+  return 'Core';
+}
+
+function inferPreferredRoomType(subjectName = '') {
+  const value = subjectName.toLowerCase();
+  if (value.includes('computer')) return 'Computer Lab';
+  if (value.includes('physics') || value.includes('chemistry') || value.includes('biology')) return 'Laboratory';
+  if (value.includes('physical') || value.includes('sports') || value === 'pe') return 'Sports Hall';
+  return 'Classroom';
+}
+
+function deriveTeacherPlanningCaps(weeklyLoad) {
+  if (weeklyLoad >= 16) return { maxDay: 6, maxWeek: 28 };
+  if (weeklyLoad >= 12) return { maxDay: 6, maxWeek: 25 };
+  return { maxDay: 5, maxWeek: 22 };
 }
 
 async function listHeadmistressSectionIds(schoolId, userId) {
@@ -584,6 +633,63 @@ async function ensureTeacherVisibleToRole({ auth, teacherId }) {
 
   throw new AppError(403, "FORBIDDEN", "No timetable teacher visibility for this role");
 }
+
+async function ensureManualBoardVisibleToViewer({ auth, classroom }) {
+  if (isLeadership(auth) || hasRole(auth, "headmistress") || hasRole(auth, "teacher")) {
+    await ensureClassroomVisibleToRole({ auth, classroom });
+    return;
+  }
+
+  if (hasRole(auth, "student")) {
+    const studentResult = await pool.query(
+      `
+        SELECT se.student_id
+        FROM student_user_accounts sua
+        JOIN student_enrollments se
+          ON se.student_id = sua.student_id
+         AND se.school_id = $1
+         AND se.classroom_id = $2
+         AND se.academic_year_id = $3
+         AND se.status = 'active'
+        WHERE sua.user_id = $4
+        LIMIT 1
+      `,
+      [auth.schoolId, classroom.id, classroom.academic_year_id, auth.userId]
+    );
+    if (!studentResult.rows[0]) {
+      throw new AppError(403, "FORBIDDEN", "Student scope does not include this classroom timetable");
+    }
+    return;
+  }
+
+  if (hasRole(auth, "parent")) {
+    const parentResult = await pool.query(
+      `
+        SELECT se.student_id
+        FROM parents p
+        JOIN parent_students ps
+          ON ps.parent_id = p.id
+        JOIN student_enrollments se
+          ON se.student_id = ps.student_id
+         AND se.school_id = p.school_id
+         AND se.classroom_id = $2
+         AND se.academic_year_id = $3
+         AND se.status = 'active'
+        WHERE p.school_id = $1
+          AND p.user_id = $4
+        LIMIT 1
+      `,
+      [auth.schoolId, classroom.id, classroom.academic_year_id, auth.userId]
+    );
+    if (!parentResult.rows[0]) {
+      throw new AppError(403, "FORBIDDEN", "Parent scope does not include this classroom timetable");
+    }
+    return;
+  }
+
+  throw new AppError(403, "FORBIDDEN", "No timetable board visibility for this role");
+}
+
 
 async function assertNoEntryConflicts({
   schoolId,
@@ -1182,6 +1288,322 @@ router.get(
   })
 );
 
+router.post(
+  "/timetable/integration/generate",
+  requireAuth,
+  requireRoles(...MANAGE_ROLES),
+  asyncHandler(async (req, res) => {
+    const body = parseSchema(
+      generateViaEngineSchema,
+      req.body || {},
+      "Invalid timetable engine generation payload"
+    );
+
+    const data = await runTimetableEngineIntegration({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      academicYearId: body.academic_year_id || null,
+    });
+
+    fireAndForgetAuditLog({
+      schoolId: req.auth.schoolId,
+      actorUserId: req.auth.userId,
+      action: "academics.timetable_engine.generated",
+      entityName: "timetable_entries",
+      metadata: {
+        academic_year_id: data.academic_year_id,
+        external_project_id: data.project.id,
+        external_run_id: data.generation.run_id,
+        synced: data.synced,
+        imported_count: data.import.imported_count,
+      },
+    });
+
+    return success(res, data, 200);
+  })
+);
+
+router.get(
+  "/timetable/wizard-snapshot",
+  requireAuth,
+  requireRoles(...MANAGE_ROLES),
+  asyncHandler(async (req, res) => {
+    const query = parseSchema(
+      wizardSnapshotQuerySchema,
+      req.query,
+      "Invalid timetable wizard snapshot query"
+    );
+
+    const academicYearId = await resolveAcademicYearId(req.auth.schoolId, query.academic_year_id);
+
+    const [schoolResult, periodResult, slotSummaryResult, subjectResult, classroomResult, teacherResult, lessonResult, entryCountResult, substitutionCountResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            s.id,
+            s.name,
+            s.branch_name,
+            s.weekly_holidays,
+            ay.name AS academic_year_name
+          FROM schools s
+          JOIN academic_years ay ON ay.id = $2 AND ay.school_id = s.id
+          WHERE s.id = $1
+          LIMIT 1
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+      pool.query(
+        `
+          SELECT period_number, label, starts_at, ends_at, is_break
+          FROM timetable_periods
+          WHERE school_id = $1
+            AND academic_year_id = $2
+            AND is_active = TRUE
+          ORDER BY period_number ASC
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+      pool.query(
+        `
+          SELECT
+            COUNT(*)::int AS slot_count,
+            COUNT(DISTINCT day_of_week)::int AS working_days_per_week
+          FROM timetable_slots
+          WHERE school_id = $1
+            AND academic_year_id = $2
+            AND is_active = TRUE
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+      pool.query(
+        `
+          SELECT id, name, code
+          FROM subjects
+          WHERE school_id = $1
+          ORDER BY name ASC
+        `,
+        [req.auth.schoolId]
+      ),
+      pool.query(
+        `
+          SELECT
+            c.id,
+            c.grade_label,
+            c.section_label,
+            c.classroom_code,
+            c.room_number,
+            c.capacity,
+            COUNT(se.id)::int AS active_student_count
+          FROM classrooms c
+          LEFT JOIN student_enrollments se
+            ON se.school_id = c.school_id
+           AND se.classroom_id = c.id
+           AND se.status = 'active'
+          WHERE c.school_id = $1
+            AND c.academic_year_id = $2
+            AND COALESCE(c.is_active, TRUE) = TRUE
+          GROUP BY c.id, c.grade_label, c.section_label, c.classroom_code, c.room_number, c.capacity
+          ORDER BY c.grade_label ASC, c.section_label ASC
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+      pool.query(
+        `
+          WITH lesson_loads AS (
+            SELECT teacher_id, COALESCE(SUM(periods_per_week), 0)::int AS weekly_load
+            FROM classroom_subjects
+            WHERE school_id = $1
+            GROUP BY teacher_id
+          )
+          SELECT
+            t.id,
+            t.employee_code,
+            t.designation,
+            u.first_name,
+            u.last_name,
+            COALESCE(ll.weekly_load, 0) AS weekly_load
+          FROM teachers t
+          JOIN users u
+            ON u.id = t.user_id
+           AND u.school_id = t.school_id
+          LEFT JOIN lesson_loads ll ON ll.teacher_id = t.id
+          WHERE t.school_id = $1
+          ORDER BY u.first_name ASC, u.last_name ASC NULLS LAST
+        `,
+        [req.auth.schoolId]
+      ),
+      pool.query(
+        `
+          SELECT
+            cs.id,
+            cs.periods_per_week,
+            cs.lesson_duration,
+            cs.lesson_priority,
+            cs.is_timetable_locked,
+            s.name AS subject_name,
+            s.code AS subject_code,
+            c.grade_label,
+            c.section_label,
+            COALESCE(c.classroom_code, CONCAT(c.grade_label, ' - ', c.section_label)) AS classroom_code,
+            u.first_name AS teacher_first_name,
+            u.last_name AS teacher_last_name,
+            t.employee_code AS teacher_code,
+            t.id AS teacher_id
+          FROM classroom_subjects cs
+          JOIN subjects s ON s.id = cs.subject_id
+          JOIN classrooms c ON c.id = cs.classroom_id AND c.school_id = cs.school_id
+          LEFT JOIN teachers t ON t.id = cs.teacher_id AND t.school_id = cs.school_id
+          LEFT JOIN users u ON u.id = t.user_id AND u.school_id = cs.school_id
+          WHERE cs.school_id = $1
+            AND c.academic_year_id = $2
+          ORDER BY c.grade_label ASC, c.section_label ASC, s.name ASC
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+      pool.query(
+        `
+          SELECT COUNT(*)::int AS total
+          FROM timetable_entries te
+          JOIN timetable_slots ts ON ts.id = te.slot_id
+          WHERE te.school_id = $1
+            AND ts.academic_year_id = $2
+            AND te.is_active = TRUE
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+      pool.query(
+        `
+          SELECT COUNT(*)::int AS total
+          FROM timetable_substitutions tsb
+          JOIN timetable_entries te ON te.id = tsb.timetable_entry_id
+          JOIN timetable_slots ts ON ts.id = te.slot_id
+          WHERE tsb.school_id = $1
+            AND ts.academic_year_id = $2
+            AND tsb.is_active = TRUE
+        `,
+        [req.auth.schoolId, academicYearId]
+      ),
+    ]);
+
+    const school = schoolResult.rows[0];
+    if (!school) {
+      throw new AppError(404, "NOT_FOUND", "School profile not found for timetable wizard");
+    }
+
+    const periods = periodResult.rows;
+    const slotSummary = slotSummaryResult.rows[0] || { slot_count: 0, working_days_per_week: 0 };
+    const teachingPeriods = periods.filter((row) => !row.is_break);
+    const breakPeriods = periods.filter((row) => row.is_break);
+
+    const subjects = subjectResult.rows.map((row, index) => ({
+      id: row.id,
+      name: row.name,
+      code: row.code,
+      category: inferSubjectCategory(row.name),
+      color: pickWizardColor(index),
+      max_per_day: inferSubjectCategory(row.name) === 'Activity' ? 1 : 2,
+      double_allowed: ['Laboratory', 'Computer Lab'].includes(inferPreferredRoomType(row.name)) || /math/i.test(row.name),
+      preferred_room_type: inferPreferredRoomType(row.name),
+    }));
+
+    const classes = classroomResult.rows.map((row, index) => ({
+      id: row.id,
+      name: `${row.grade_label} ${row.section_label}`,
+      grade_label: row.grade_label,
+      section_label: row.section_label,
+      stream_label: row.section_label,
+      code: row.classroom_code || `${row.grade_label}-${row.section_label}`,
+      color: pickWizardColor(index + 2),
+      strength: Number(row.active_student_count || 0),
+    }));
+
+    const classrooms = classroomResult.rows.map((row, index) => ({
+      id: row.id,
+      name: row.room_number || `${row.grade_label} ${row.section_label}`,
+      code: row.classroom_code || row.room_number || `ROOM-${index + 1}`,
+      room_type: /lab/i.test(row.room_number || '') ? 'Laboratory' : 'Classroom',
+      capacity: row.capacity ? Number(row.capacity) : null,
+      color: pickWizardColor(index + 3),
+    }));
+
+    const teachers = teacherResult.rows.map((row, index) => {
+      const caps = deriveTeacherPlanningCaps(Number(row.weekly_load || 0));
+      return {
+        id: row.id,
+        name: `${row.first_name} ${row.last_name || ''}`.trim(),
+        code: row.employee_code,
+        title: row.designation || ((row.first_name || '').toLowerCase().endswith('a') ? 'Ms.' : 'Mr.'),
+        color: pickWizardColor(index + 4),
+        max_periods_day: caps.maxDay,
+        max_periods_week: caps.maxWeek,
+      };
+    });
+
+    const lessons = lessonResult.rows.map((row) => ({
+      id: row.id,
+      teacher_name: `${row.teacher_first_name || 'Unassigned'} ${row.teacher_last_name || ''}`.trim(),
+      teacher_code: row.teacher_code,
+      subject_name: row.subject_name,
+      subject_code: row.subject_code,
+      classroom_name: `${row.grade_label} ${row.section_label}`,
+      classroom_code: row.classroom_code,
+      periods_per_week: Number(row.periods_per_week || 0),
+      lesson_duration: Number(row.lesson_duration || 1),
+      lesson_priority: Number(row.lesson_priority || 5),
+      is_timetable_locked: Boolean(row.is_timetable_locked),
+    }));
+
+    const missingTeacherAssignments = lessons.filter((row) => !row.teacher_code).length;
+    const missingPeriodLoads = lessons.filter((row) => Number(row.periods_per_week || 0) <= 0).length;
+    const lockedLessons = lessons.filter((row) => row.is_timetable_locked).length;
+    const warningMessages = [];
+    if (missingTeacherAssignments > 0) warningMessages.push(`${missingTeacherAssignments} lesson assignments still need a teacher.`);
+    if (missingPeriodLoads > 0) warningMessages.push(`${missingPeriodLoads} lesson assignments still need periods-per-week configured.`);
+    if (Number(slotSummary.slot_count || 0) === 0) warningMessages.push('No timetable slots exist yet. Generate standard slots in the School step before running the engine.');
+
+    return success(res, {
+      school: {
+        school_id: school.id,
+        school_name: school.name,
+        branch_name: school.branch_name || null,
+        academic_year_id: academicYearId,
+        academic_year_name: school.academic_year_name,
+        working_days_per_week: Number(slotSummary.working_days_per_week || 0),
+        periods_per_day: teachingPeriods.length,
+        break_periods: breakPeriods.length,
+        school_start_time: periods[0]?.starts_at ? String(periods[0].starts_at).slice(0, 5) : null,
+        first_period_start_time: teachingPeriods[0]?.starts_at ? String(teachingPeriods[0].starts_at).slice(0, 5) : null,
+        weekly_holidays: Array.isArray(school.weekly_holidays) ? school.weekly_holidays : [],
+      },
+      subjects,
+      classes,
+      classrooms,
+      teachers,
+      lessons,
+      constraints: {
+        slot_count: Number(slotSummary.slot_count || 0),
+        active_entry_count: Number(entryCountResult.rows[0]?.total || 0),
+        active_substitution_count: Number(substitutionCountResult.rows[0]?.total || 0),
+        locked_lessons: lockedLessons,
+        missing_teacher_assignments: missingTeacherAssignments,
+        missing_period_loads: missingPeriodLoads,
+        warning_messages: warningMessages,
+      },
+      demo_project: {
+        available: true,
+        source: 'current_seeded_school_data',
+        summary: {
+          subjects: subjects.length,
+          classes: classes.length,
+          classrooms: classrooms.length,
+          teachers: teachers.length,
+          lessons: lessons.length,
+        },
+      },
+    }, 200);
+  })
+);
+
 // ---------------------------------------------------------------------------
 // Timetable entries
 // ---------------------------------------------------------------------------
@@ -1639,6 +2061,26 @@ router.get(
     );
   })
 );
+
+router.get(
+  "/timetable/classrooms/:classroomId/manual-board",
+  requireAuth,
+  requireRoles(...MANUAL_BOARD_VIEW_ROLES),
+  asyncHandler(async (req, res) => {
+    const path = parseSchema(classroomPathSchema, req.params, "Invalid classroom id");
+    const classroom = await ensureClassroomInSchool(req.auth.schoolId, path.classroomId);
+    await ensureManualBoardVisibleToViewer({ auth: req.auth, classroom });
+
+    const board = await ensureBoard({
+      schoolId: req.auth.schoolId,
+      classroomId: classroom.id,
+      actorUserId: req.auth.userId,
+    });
+
+    return success(res, board, 200);
+  })
+);
+
 
 async function listTeacherTimetableData({
   schoolId,

@@ -20,11 +20,12 @@ import {
   getAdmissionApplications,
   getAdmissionsPipeline,
   getLookupAcademicYears,
+  getLookupSections,
   type AdmissionApplicationRow,
   type AdmissionPipelineData,
 } from "@/lib/api";
 
-const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk"];
+const ADMISSIONS_VIEW_ROLES = ["school_admin", "principal", "vice_principal", "front_desk", "headmistress"];
 const ADMISSIONS_SAVED_VIEW_KEY = "agora_web_admissions_pipeline_saved_view_v1";
 const ADMISSIONS_SAVED_VIEWS_KEY = "agora_web_admissions_pipeline_saved_views_v1";
 
@@ -43,7 +44,9 @@ export default function AdmissionPipelinePage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [academicYearId, setAcademicYearId] = useState("");
+  const [sectionId, setSectionId] = useState("");
   const [academicYears, setAcademicYears] = useState<Array<{ id: string; label: string }>>([]);
+  const [sections, setSections] = useState<Array<{ id: string; label: string }>>([]);
   const [pipeline, setPipeline] = useState<AdmissionPipelineData | null>(null);
   const [applications, setApplications] = useState<AdmissionApplicationRow[]>([]);
   const [urlSyncReady, setUrlSyncReady] = useState(false);
@@ -68,6 +71,7 @@ export default function AdmissionPipelinePage() {
     setDateFrom(params.get("date_from") || "");
     setDateTo(params.get("date_to") || "");
     setAcademicYearId(params.get("academic_year_id") || "");
+    setSectionId(params.get("section_id") || "");
     setUrlSyncReady(true);
   }, [searchParams]);
 
@@ -77,8 +81,9 @@ export default function AdmissionPipelinePage() {
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
     if (academicYearId) params.set("academic_year_id", academicYearId);
+    if (sectionId) params.set("section_id", sectionId);
     return params.toString();
-  }, [search, dateFrom, dateTo, academicYearId]);
+  }, [search, dateFrom, dateTo, academicYearId, sectionId]);
 
   useEffect(() => {
     if (!urlSyncReady) return;
@@ -89,7 +94,7 @@ export default function AdmissionPipelinePage() {
     router.replace(`${pathname}${next ? `?${next}` : ""}`, { scroll: false });
   }, [urlSyncReady, buildCurrentQuery, pathname, router, searchParams]);
 
-  const hasActiveFilters = Boolean(search.trim() || dateFrom || dateTo || academicYearId);
+  const hasActiveFilters = Boolean(search.trim() || dateFrom || dateTo || academicYearId || sectionId);
   const activeFilters = [
     search.trim() ? { key: "search", label: `Search: ${search.trim()}`, clear: () => setSearch("") } : null,
     dateFrom ? { key: "date_from", label: `From: ${dateFrom}`, clear: () => setDateFrom("") } : null,
@@ -101,6 +106,13 @@ export default function AdmissionPipelinePage() {
           clear: () => setAcademicYearId(""),
         }
       : null,
+    sectionId
+      ? {
+          key: "section_id",
+          label: `Section: ${sections.find((section) => section.id === sectionId)?.label || sectionId}`,
+          clear: () => setSectionId(""),
+        }
+      : null,
   ].filter(Boolean) as Array<{ key: string; label: string; clear: () => void }>;
 
   function clearAllFilters() {
@@ -108,6 +120,7 @@ export default function AdmissionPipelinePage() {
     setDateFrom("");
     setDateTo("");
     setAcademicYearId("");
+    setSectionId("");
     setViewMessage("");
   }
 
@@ -186,13 +199,14 @@ export default function AdmissionPipelinePage() {
       setLoading(true);
       setError("");
       try {
-        const [pipelineRes, appsRes] = await Promise.all([
+        const [pipelineRes, appsRes, sectionRows] = await Promise.all([
           getAdmissionsPipeline({
             limit_per_stage: 12,
             ...(search.trim() ? { search: search.trim() } : {}),
             ...(dateFrom ? { date_from: dateFrom } : {}),
             ...(dateTo ? { date_to: dateTo } : {}),
             ...(academicYearId ? { academic_year_id: academicYearId } : {}),
+            ...(sectionId ? { section_id: sectionId } : {}),
           }),
           getAdmissionApplications({
             page: "1",
@@ -201,12 +215,17 @@ export default function AdmissionPipelinePage() {
             ...(dateFrom ? { date_from: dateFrom } : {}),
             ...(dateTo ? { date_to: dateTo } : {}),
             ...(academicYearId ? { academic_year_id: academicYearId } : {}),
+            ...(sectionId ? { section_id: sectionId } : {}),
           }),
+          sections.length ? Promise.resolve(sections) : getLookupSections({ page_size: 100 }),
         ]);
 
         if (cancelled) return;
         setPipeline(pipelineRes.data);
         setApplications(appsRes.data);
+        if (!sections.length) {
+          setSections(sectionRows.map((row) => ({ id: row.id, label: row.label })));
+        }
       } catch (err: unknown) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load admission pipeline");
@@ -221,7 +240,7 @@ export default function AdmissionPipelinePage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [allowed, search, dateFrom, dateTo, academicYearId]);
+  }, [allowed, search, dateFrom, dateTo, academicYearId, sectionId, sections]);
 
   if (!allowed) {
     return (
@@ -253,7 +272,7 @@ export default function AdmissionPipelinePage() {
         )}
 
         <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
             <div className="md:col-span-2">
               <label className="label-text">Search Applicant</label>
               <input
@@ -300,6 +319,22 @@ export default function AdmissionPipelinePage() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="label-text">Section</label>
+              <select
+                className="input-field"
+                aria-label="Section"
+                value={sectionId}
+                onChange={(event) => setSectionId(event.target.value)}
+              >
+                <option value="">All Sections</option>
+                {sections.map((section) => (
+                  <option key={section.id} value={section.id}>
+                    {section.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           {hasActiveFilters && (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -319,7 +354,12 @@ export default function AdmissionPipelinePage() {
             <button className="btn-secondary" onClick={clearAllFilters}>Clear all</button>
             <div className="ml-auto flex flex-wrap gap-2">
               <Link href="/dashboard/admissions" className="btn-secondary">Dashboard</Link>
-              <Link href="/dashboard/admissions/applicants/new" className="btn-primary">New Applicant</Link>
+              <Link
+                href={`/dashboard/admissions/applicants/new${sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : ""}`}
+                className="btn-primary"
+              >
+                New Applicant
+              </Link>
             </div>
           </div>
           <SavedViewsPanel
